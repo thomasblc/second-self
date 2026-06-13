@@ -1,0 +1,21 @@
+{
+  "name": "second-self",
+  "version": "0.1.0",
+  "description": "An open-source second brain that learns to talk like you and knows what you know. Local notes vault + on-device LoRA training + chat, via the QVAC SDK.",
+  "type": "module",
+  "license": "Apache-2.0",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "start": "node app/server.js",
+    "test": "node app/test-e2e.mjs",
+    "test:models": "node app/test-e2e.mjs --models",
+    "test:train": "node app/test-e2e.mjs --train",
+    "finetune": "node spike/finetune.js",
+    "compare": "node spike/chat-compare.js",
+    "bootstrap": "node spike/make-bootstrap.js"
+  },
+  "dependencies": {
+    "@qvac/sdk": "^0.12.2",
+    "ws": "^8.18.0"
+  }
+}

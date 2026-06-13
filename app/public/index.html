@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Second Self</title>
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<div id="app">
+  <nav id="rail">
+    <div class="brand" id="brand" title="Second Self">SECOND SELF</div>
+    <button class="rail-btn active" data-pane="vault" title="Vault (notes)" aria-label="Vault" aria-current="page">&#9776;</button>
+    <button class="rail-btn" data-pane="graph" title="Graph + Train" aria-label="Graph and Train">&#9683;</button>
+    <button class="rail-btn" data-pane="chat" title="Chat" aria-label="Chat">&#9993;</button>
+    <button class="rail-btn" id="btn-palette" title="Command palette (Cmd/Ctrl+K)" aria-label="Command palette">&#9000;</button>
+    <div class="rail-spacer"></div>
+    <button class="rail-btn" id="btn-settings" title="Settings" aria-label="Settings">&#9881;</button>
+  </nav>
+
+  <div id="main">
+    <!-- VAULT -->
+    <section class="pane active" id="vault-pane">
+      <div id="vault-tree">
+        <div class="tree-head">
+          <input id="search" placeholder="Search notes...  (Cmd+O to jump)" aria-label="Search notes">
+          <button class="btn" id="btn-new" title="New note" aria-label="New note">+</button>
+        </div>
+        <div id="file-list"></div>
+      </div>
+      <div id="editor-wrap">
+        <div class="editor-bar">
+          <span class="title" id="note-title">No note open</span>
+          <span id="save-state" class="metric" style="color:var(--mut);font-size:11px"></span>
+          <button class="btn" id="btn-save">Save</button>
+          <button class="btn danger" id="btn-del">Delete</button>
+        </div>
+        <div class="editor-split">
+          <textarea id="editor" spellcheck="false" placeholder="Open a note from the left, or press + to create one. Markdown, [[wikilinks]], > [!tip] callouts, and tables all render live."></textarea>
+          <div id="preview"></div>
+        </div>
+        <div id="backlinks"></div>
+      </div>
+    </section>
+
+    <!-- GRAPH + TRAIN -->
+    <section class="pane" id="graph-pane">
+      <div id="graph-left">
+        <canvas id="graph-canvas" role="img" aria-label="Knowledge graph of your notes. Use the command palette or Auto-select for keyboard access."></canvas>
+        <div id="graph-overlay">
+          <span id="hl-box"><span class="magic">&#10024;</span><input id="hl-input" placeholder="highlight notes about... (e.g. travel)" aria-label="Highlight notes by natural-language query"><button class="btn" id="btn-hl-clear" title="clear highlight" aria-label="Clear highlight" style="display:none">&times;</button></span>
+          <button class="btn" id="btn-graph-build">Build</button>
+          <button class="btn" id="btn-graph-embed">+ semantic links</button>
+          <span class="pill" id="graph-stats">no graph yet</span>
+        </div>
+        <div class="legend">
+          <span class="lg-link">link</span><span class="lg-tag">tag</span><span class="lg-embed">semantic</span><span class="lg-hi">highlighted</span>
+          <span style="border-left:1px solid var(--line);padding-left:10px">&#9711; selected = will train</span>
+        </div>
+      </div>
+      <aside id="train-panel">
+        <div class="panel-sec">
+          <h3>1. Pick what trains "you"</h3>
+          <div class="row"><button class="btn primary" id="btn-autoselect">Auto-select relevant docs</button></div>
+          <div class="row"><span id="select-info" style="color:var(--mut);font-size:12px">The app embeds every note and picks the ones most central to your themes. Shift-click nodes to adjust.</span></div>
+          <div class="row">selected: <span class="sel-count" id="sel-count">0</span> docs <button class="btn" id="btn-sel-clear" style="margin-left:auto">clear</button></div>
+        </div>
+        <div class="panel-sec">
+          <h3>2. Train a LoRA on you</h3>
+          <div class="row">base
+            <select id="base-pick">
+              <option value="1.7b">Qwen3 1.7B (proven, ~2h)</option>
+              <option value="4b">Qwen3 4B (sharper, ~4-5h)</option>
+              <option value="8b">Qwen3 8B (best, overnight)</option>
+              <option value="600m">Qwen3 0.6B (fast, weak)</option>
+            </select>
+          </div>
+          <div class="row">epochs <input class="num" id="epochs" type="number" value="1" min="1" max="4" style="width:54px">
+            ctx <input class="num" id="ctx" type="number" value="256" min="128" max="1024" step="128" style="width:64px"></div>
+          <div class="row"><button class="btn primary" id="btn-train">Start training</button><button class="btn danger" id="btn-train-stop" disabled>Stop</button></div>
+          <div class="bar"><div id="train-bar"></div></div>
+          <div class="row metric" id="train-metrics" style="font-size:11px;color:var(--mut)">idle</div>
+          <div class="loss-log" id="train-log"></div>
+        </div>
+        <div class="panel-sec">
+          <h3>3. Your adapters</h3>
+          <div id="adapter-list" style="font-size:12px;color:var(--mut)">none yet</div>
+        </div>
+      </aside>
+    </section>
+
+    <!-- CHAT -->
+    <section class="pane" id="chat-pane">
+      <div class="chat-bar">
+        <label class="toggle">model
+          <select id="chat-base"><option value="1.7b">1.7B</option><option value="4b">4B</option><option value="8b">8B</option><option value="600m">0.6B</option></select>
+        </label>
+        <label class="toggle"><input type="checkbox" id="tg-voice"> Voice (your LoRA)</label>
+        <select id="chat-adapter" class="num" style="display:none"></select>
+        <label class="toggle"><input type="checkbox" id="tg-memory"> Memory (your notes)</label>
+        <button class="btn" id="btn-ingest" title="Index the vault for retrieval">Index vault for memory</button>
+        <span id="chat-model-state" style="margin-left:auto;color:var(--mut);font-size:11px"></span>
+      </div>
+      <div id="messages"><div class="empty"><div style="font-size:34px">&#128173;</div>Talk to the base model now. Train a LoRA to flip on <b>your voice</b>, index your vault to give it <b>your memory</b>. Toggle them above to feel the difference. Everything runs on this machine.</div></div>
+      <div class="chat-input">
+        <textarea id="chat-text" placeholder="Ask anything... (Enter to send)"></textarea>
+        <button class="btn primary" id="btn-send">Send</button>
+      </div>
+    </section>
+  </div>
+</div>
+
+<div id="footer">
+  <span><span class="tag-local">&#9679; LOCAL</span> vault, embeddings, training, chat all on this machine</span>
+  <span class="tag-net">&#9679; NETWORK</span><span style="color:var(--mut)">only the first-run model download</span>
+  <span id="status-line">connecting... <span class="kbd">Cmd K</span></span>
+</div>
+
+<!-- settings menu -->
+<div id="settings-menu">
+  <div class="menu-item" id="set-theme">Theme<span class="theme-dots">
+    <button class="theme-dot" data-t="dark" title="Dark" aria-label="Dark theme" style="background:#0e1116"></button>
+    <button class="theme-dot" data-t="light" title="Light" aria-label="Light theme" style="background:#f6f8fb"></button>
+    <button class="theme-dot" data-t="original" title="QVAC" aria-label="QVAC theme" style="background:#0b0f0d"></button>
+  </span></div>
+  <div class="menu-item" id="set-vault">&#128193; Change vault folder</div>
+  <div class="menu-item" id="set-onboard">&#10024; Show welcome tour</div>
+  <div class="menu-item" id="set-ingest">&#129504; Index vault for memory</div>
+  <div class="menu-item" id="set-about" style="color:var(--mut);font-size:12px">Second Self - local AI, your data. Apache 2.0.</div>
+</div>
+
+<!-- command palette -->
+<div class="overlay" id="palette"><div class="palette-box">
+  <input id="palette-input" placeholder="Type a command or search notes..." autocomplete="off">
+  <div class="palette-list" id="palette-list"></div>
+</div></div>
+
+<!-- onboarding -->
+<div class="overlay" id="onboard"><div class="onboard-box" id="onboard-box"></div></div>
+
+<div id="toasts"></div>
+<div id="hover-card"></div>
+<canvas id="fx"></canvas>
+
+<script type="module" src="app.js"></script>
+</body>
+</html>

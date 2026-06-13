@@ -1,0 +1,6 @@
+node_modules/
+data/
+train/
+adapters/
+*.log
+.DS_Store
