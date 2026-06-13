@@ -14,6 +14,7 @@ import { buildRecords, selectByEmbedding, refineWithLLM, buildCausalDataset } fr
 import { Trainer } from "./lib/train.js";
 import { buildCatalog, constantFor, modelTypeFor, deleteCached } from "./lib/catalog.js";
 import { hardwareInfo, fit, recommend } from "./lib/hardware.js";
+import { importCloudExport } from "./lib/cloud-chat.js";
 
 const APP_DIR = path.dirname(fileURLToPath(import.meta.url));
 const RECIPE_ROOT = path.resolve(APP_DIR, "..");
@@ -67,6 +68,23 @@ const server = http.createServer((req, res) => {
   }
 });
 
+// ---- vault file watcher: keep the app's view current when files change on disk
+// (external edits, or a folder synced via iCloud/Dropbox/git = the practical equivalent
+// of Obsidian Sync for a local-first app). Debounced; broadcast to all clients. ----
+let watchTimer = null, watcher = null;
+function broadcast(obj) { const s = JSON.stringify(obj); for (const c of wss.clients) { if (c.readyState === 1) { try { c.send(s); } catch { /* */ } } } }
+function startVaultWatch() {
+  if (watcher) { try { watcher.close(); } catch { /* */ } watcher = null; }
+  try {
+    watcher = fs.watch(vault.root, { recursive: true }, (_evt, file) => {
+      if (!file || /(^|\/)\.|\/(node_modules|\.git|train|\.obsidian)\//.test(file)) return;
+      if (!/\.(md|markdown|txt)$/i.test(file)) return;
+      clearTimeout(watchTimer);
+      watchTimer = setTimeout(() => { invalidateCaches(); broadcast({ type: "vault.changed" }); }, 500);
+    });
+  } catch { /* recursive watch may be unsupported on some platforms; non-fatal */ }
+}
+
 // ---- WebSocket protocol: {id, type, ...} request -> {id, ok, data|error} reply;
 // streaming handlers also push {type, id, ...} frames before the final reply. ----
 // Reject cross-origin browser connections (CSRF / DNS-rebinding): a malicious page the
@@ -107,7 +125,16 @@ async function handle(type, msg, { reply, fail, push }) {
   }
   switch (type) {
     case "vault.info": return reply({ root: vault.root, repoDocs: path.join(REPO_ROOT, "docs"), sample: SAMPLE });
-    case "vault.setRoot": { const root = vault.setRoot(msg.path); invalidateCaches(); return reply({ root }); }
+    case "vault.setRoot": { const root = vault.setRoot(msg.path); invalidateCaches(); startVaultWatch(); return reply({ root }); }
+    case "vault.createVault": {
+      // make a new vault folder + a starter note, then switch to it (onboarding "create vault")
+      const dir = path.resolve(msg.path);
+      fs.mkdirSync(dir, { recursive: true });
+      const welcome = path.join(dir, "Welcome.md");
+      if (!fs.existsSync(welcome)) fs.writeFileSync(welcome, "# Welcome to your vault\n\nThis is your second brain. Create notes, link them with [[wikilinks]], and watch the graph grow. When you have enough, train a model on yourself from the Graph + Train pane.\n\n- [[ideas]]\n- [[projects]]\n", "utf8");
+      vault.setRoot(dir); invalidateCaches(); startVaultWatch();
+      return reply({ root: vault.root });
+    }
     case "vault.list": return reply({ root: vault.root, files: vault.list() });
     case "vault.read": return reply({ path: msg.path, content: vault.read(msg.path) });
     case "vault.write": { const r = vault.write(msg.path, msg.content); invalidateCaches(); return reply(r); }
@@ -115,6 +142,7 @@ async function handle(type, msg, { reply, fail, push }) {
     case "vault.rename": { const r = vault.rename(msg.from, msg.to); invalidateCaches(); return reply(r); }
     case "vault.delete": { const r = vault.remove(msg.path); invalidateCaches(); return reply(r); }
     case "vault.search": return reply({ results: vault.search(msg.query, msg.limit || 50) });
+    case "import.cloud": { const r = importCloudExport(msg.path, vault, msg.dest || "imported"); invalidateCaches(); return reply(r); }
 
     case "graph.build": { graphCache = buildGraph(vault); return reply(graphCache); }
     case "graph.embed": {
@@ -250,6 +278,7 @@ async function handle(type, msg, { reply, fail, push }) {
 server.listen(PORT, "127.0.0.1", () => {
   console.log(`Second Self app on http://localhost:${PORT}`);
   console.log(`default vault: ${vault.root}`);
+  startVaultWatch();
 });
 
 process.on("SIGINT", async () => { await mm.unloadAll(); trainer.stop(); process.exit(0); });

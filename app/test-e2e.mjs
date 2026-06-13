@@ -108,6 +108,13 @@ async function main() {
   ok(g.nodes.length === 4, `graph has 4 nodes (got ${g.nodes.length})`);
   ok(g.edges.some((e) => e.kind === "link" && [e.source, e.target].includes("index.md")), "wikilink edge index->alpha/beta built");
 
+  section("CLOUD IMPORT");
+  const expFile = path.join(vault, "chatgpt-export.json");
+  fs.writeFileSync(expFile, JSON.stringify([{ title: "E2E chat", create_time: 1750000000, mapping: { a: { message: { author: { role: "user" }, content: { parts: ["hi"] }, create_time: 1 } }, b: { message: { author: { role: "assistant" }, content: { parts: ["hello there"] }, create_time: 2 } } } }]));
+  const imp = await req("import.cloud", { path: expFile });
+  ok(imp.written >= 1 && imp.source === "chatgpt", `cloud import wrote ${imp.written} chatgpt note(s)`);
+  ok((await req("vault.list")).files.some((f) => f.path.includes("imported/chatgpt")), "imported conversation appears in the vault");
+
   if (WITH_MODELS) {
     section("MODELS: embed / highlight / select / rag / chat");
     const ge = await req("graph.embed");
@@ -144,6 +151,13 @@ async function main() {
     const ad = await req("train.adapters");
     ok(ad.adapters.length >= 1, "adapter listed for the chat Voice toggle");
   }
+
+  section("CREATE VAULT (runs last; switches the root)");
+  const newVault = path.join(os.tmpdir(), "ss-e2e-newvault-" + Math.random().toString(36).slice(2, 8));
+  const cv = await req("vault.createVault", { path: newVault });
+  ok(cv.root === newVault, "createVault switched to the new folder");
+  ok((await req("vault.list")).files.some((f) => f.path === "Welcome.md"), "new vault has a starter Welcome note");
+  try { fs.rmSync(newVault, { recursive: true, force: true }); } catch { /* */ }
 
   ws.close();
 }

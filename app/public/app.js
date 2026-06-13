@@ -270,8 +270,26 @@ async function runHighlight(q) {
     toast(d.matches.length ? `Highlighted ${d.matches.length} notes for "${q}"` : `No matches for "${q}"`, d.matches.length ? "" : "warn");
   } catch (e) { $("graph-stats").textContent = "highlight failed"; toast(e.message, "bad"); }
 }
+// type = instant client-side name/path match; Enter = semantic (model) highlight
+$("hl-input").addEventListener("input", (e) => {
+  const q = e.target.value.trim().toLowerCase();
+  if (!graphData) return;
+  if (!q) { graph.clearHighlight(); $("btn-hl-clear").style.display = "none"; return; }
+  const ids = graphData.nodes.filter((n) => (n.label || "").toLowerCase().includes(q) || (n.path || "").toLowerCase().includes(q)).map((n) => n.id);
+  graph.setHighlight(ids); $("btn-hl-clear").style.display = "";
+});
 $("hl-input").addEventListener("keydown", (e) => { if (e.key === "Enter") runHighlight(e.target.value); });
 $("btn-hl-clear").onclick = () => { graph.clearHighlight(); $("hl-input").value = ""; $("btn-hl-clear").style.display = "none"; };
+
+// vault auto-refresh: a file changed on disk (external edit, or a synced folder)
+on("vault.changed", async () => {
+  graphData = null; // rebuild graph lazily on next view
+  const typing = document.activeElement === editor || ($("search").value || "").trim();
+  if (!typing) { try { await loadFiles(); } catch { /* */ } if ($("graph-pane").classList.contains("active")) ensureGraph(); }
+  if (current && !dirty && document.activeElement !== editor) {
+    try { const d = await request("vault.read", { path: current }); if (d.content !== editor.value) { editor.value = d.content; readCache.set(current, d.content); renderPreview(); } } catch { /* */ }
+  }
+});
 
 // selection (training corpus)
 let selection = new Set();
@@ -447,6 +465,8 @@ function commands() {
     { ico: "◓", label: "Go to Graph + Train", run: () => switchPane("graph") },
     { ico: "✉", label: "Go to Chat", run: () => switchPane("chat") },
     { ico: "⤓", label: "Models: download / manage", run: () => switchPane("models") },
+    { ico: "➕", label: "Create a new vault folder", run: createVaultFlow },
+    { ico: "📥", label: "Import ChatGPT / Claude conversations", run: importCloudFlow },
     { ico: "◑", label: "Cycle theme (dark / light / QVAC)", run: cycleTheme },
     { ico: "◉", label: "Build knowledge graph", run: () => { switchPane("graph"); $("btn-graph-build").click(); } },
     { ico: "✨", label: "Add semantic links", run: () => { switchPane("graph"); $("btn-graph-embed").click(); } },
@@ -494,8 +514,29 @@ $("btn-settings").onclick = (e) => { e.stopPropagation(); settingsMenu.classList
 document.addEventListener("click", (e) => { if (!settingsMenu.contains(e.target) && e.target !== $("btn-settings")) settingsMenu.classList.remove("show"); });
 $("set-theme").onclick = (e) => { if (!e.target.classList.contains("theme-dot")) cycleTheme(); };
 $("set-vault").onclick = changeVault;
+$("set-newvault").onclick = createVaultFlow;
+$("set-import").onclick = importCloudFlow;
 $("set-onboard").onclick = () => { settingsMenu.classList.remove("show"); startOnboarding(true); };
 $("set-ingest").onclick = () => { settingsMenu.classList.remove("show"); ingest(); };
+async function createVaultFlow() {
+  settingsMenu.classList.remove("show");
+  if (!await confirmDiscard()) return;
+  const dir = prompt("New vault folder (absolute path), e.g. /Users/you/my-vault:");
+  if (!dir) return;
+  try {
+    await request("vault.createVault", { path: dir });
+    graphData = null; current = null; selection = new Set(); editor.value = ""; preview.innerHTML = ""; noteTitle.textContent = "No note open";
+    await loadFiles(); toast("New vault created at " + dir);
+  } catch (e) { toast(e.message, "bad"); }
+}
+async function importCloudFlow() {
+  settingsMenu.classList.remove("show");
+  const p = prompt("Path to your ChatGPT or Claude export file (conversations.json):");
+  if (!p) return;
+  toast("Importing conversations...");
+  try { const r = await request("import.cloud", { path: p }); toast(`Imported ${r.written} ${r.source} conversations into ${r.folder}`); await loadFiles(); }
+  catch (e) { toast("Import failed: " + e.message, "bad"); }
+}
 async function changeVault() {
   settingsMenu.classList.remove("show");
   if (!await confirmDiscard()) return;
