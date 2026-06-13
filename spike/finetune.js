@@ -4,7 +4,10 @@
 // this process tree (the SDK worker is a child process), wall-clock timing, and the
 // exact adapter filename + size from outputParametersDir (hard rule 8).
 // Usage: node spike/finetune.js [--data bootstrap|whatsapp] [--epochs 2]
-import { finetune, loadModel, unloadModel, QWEN3_600M_INST_Q4, QWEN3_1_7B_INST_Q4, QWEN3_4B_INST_Q4_K_M, QWEN3_8B_INST_Q4_K_M } from "@qvac/sdk";
+// NOTE: the finetuner only accepts F32/F16/Q4_0/Q8_0/TQ quants. Q4_K_M (the plain 4B/8B
+// constants) is REJECTED with "Finetuning is not supported for this quantization type".
+// So the 4B base here is the Q4_0 SHARD; there is no fine-tunable 8B in the SDK.
+import { finetune, loadModel, unloadModel, QWEN3_600M_INST_Q4, QWEN3_1_7B_INST_Q4, QWEN3_4B_INST_Q4_SHARD } from "@qvac/sdk";
 import os from "node:os";
 import fs from "node:fs";
 import path from "node:path";
@@ -27,10 +30,10 @@ const microArg = arg("--micro", null);
 // 1e-4 (the SDK example value) made the loss climb then diverge to NaN on real chat data;
 // 5e-5 is the safer default for this dataset size
 const lr = Number(arg("--lr", "5e-5"));
-const baseKey = arg("--base", "600m"); // 600m | 1.7b | 4b | 8b (a LoRA only runs on the base it was trained on)
-const BASES = { "600m": QWEN3_600M_INST_Q4, "1.7b": QWEN3_1_7B_INST_Q4, "4b": QWEN3_4B_INST_Q4_K_M, "8b": QWEN3_8B_INST_Q4_K_M };
+const baseKey = arg("--base", "600m"); // 600m | 1.7b | 4b (Q4_0 bases; a LoRA only runs on the base it was trained on)
+const BASES = { "600m": QWEN3_600M_INST_Q4, "1.7b": QWEN3_1_7B_INST_Q4, "4b": QWEN3_4B_INST_Q4_SHARD };
 const BASE = BASES[baseKey];
-if (!BASE) { console.error(`ABORT: unknown --base ${baseKey} (600m | 1.7b | 4b | 8b)`); process.exit(1); }
+if (!BASE) { console.error(`ABORT: unknown/non-fine-tunable --base ${baseKey} (600m | 1.7b | 4b; 8B is Q4_K_M and cannot be fine-tuned)`); process.exit(1); }
 // SFT (chat, loss on assistant turns, JSONL) vs Causal (raw long-form text, .txt). Vault notes = causal.
 const mode = arg("--mode", "sft"); // sft | causal
 const ext = mode === "causal" ? "txt" : "jsonl";

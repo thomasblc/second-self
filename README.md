@@ -12,9 +12,12 @@ Second Self is a local, Obsidian-style notes vault that can also train a small A
 - **A knowledge graph.** Every note is a node. Edges come from your links, shared tags, and on-device **embedding similarity**, so related notes connect even when you never linked them. Hover to explore, drag to rearrange.
 - **Natural-language highlight.** Type "highlight notes about travel" and the model lights up the matching notes on the graph.
 - **Auto-selection.** The app embeds your vault and proposes which notes are worth training a voice from (you can adjust by shift-clicking nodes).
-- **On-device LoRA training.** One click fine-tunes a small base model (Qwen3 0.6B / 1.7B / 4B / 8B) on your selected notes, with a live loss/ETA panel. The output is one small adapter file you own.
+- **On-device LoRA training.** One click fine-tunes a small base model (Qwen3 0.6B / 1.7B / 4B, all Q4_0) on your selected notes, with a live loss/ETA panel. The output is one small adapter file you own.
+- **A model picker.** Browse QVAC-SDK-compatible models (fine-tunable voice bases, chat models, and embedders) with their Hugging Face links and sizes, download any of them in one click with a progress bar, and delete to reclaim disk. Everything caches in `~/.qvac/models`, shared across the app.
 - **Chat with your second self.** Switch between the base model and your fine-tuned one, and toggle **Voice** (your LoRA) and **Memory** (retrieval over your vault) to feel the difference.
 - **Three themes** (dark, light, and a QVAC-brand "original"), a **command palette** (Cmd/Ctrl+K), a quick switcher (Cmd/Ctrl+O), and a first-run tour.
+
+> Fine-tuning needs a Q4_0 / Q8_0 / F16 base, so the trainable bases are Qwen3 0.6B / 1.7B / 4B. Larger Q4_K_M models (e.g. Qwen3 8B) are great to chat with but cannot be fine-tuned.
 
 ## Quickstart
 

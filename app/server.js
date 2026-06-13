@@ -12,6 +12,7 @@ import { buildGraph, addEmbedEdges } from "./lib/graph.js";
 import { ModelManager, topKPairs, cosine, BASES } from "./lib/models.js";
 import { buildRecords, selectByEmbedding, refineWithLLM, buildCausalDataset } from "./lib/select.js";
 import { Trainer } from "./lib/train.js";
+import { buildCatalog, constantFor, modelTypeFor, deleteCached } from "./lib/catalog.js";
 
 const APP_DIR = path.dirname(fileURLToPath(import.meta.url));
 const RECIPE_ROOT = path.resolve(APP_DIR, "..");
@@ -96,7 +97,7 @@ wss.on("connection", (ws) => {
 
 // Ops that load an SDK model. While a training child holds the global ~/.qvac lock,
 // these would contend with it, so refuse them until the run finishes.
-const MODEL_OPS = new Set(["graph.embed", "graph.highlight", "select.auto", "select.refine", "model.warm", "rag.ingest", "chat.send"]);
+const MODEL_OPS = new Set(["graph.embed", "graph.highlight", "select.auto", "select.refine", "model.warm", "model.download", "rag.ingest", "chat.send"]);
 
 async function handle(type, msg, { reply, fail, push }) {
   if (MODEL_OPS.has(type) && trainer.isRunning()) return fail("training in progress - try again when it finishes");
@@ -160,6 +161,20 @@ async function handle(type, msg, { reply, fail, push }) {
 
     case "model.status": return reply(mm.status());
     case "model.warm": { await mm.ensureLLM({ baseKey: msg.baseKey || "1.7b" }); return reply(mm.status()); }
+    case "model.catalog": return reply({ models: buildCatalog() });
+    case "model.download": {
+      const m = constantFor(msg.name);
+      if (!m) return fail(`unknown or non-catalog model: ${msg.name}`);
+      push({ type: "download.progress", name: msg.name, pct: 0 });
+      await mm.download(m, modelTypeFor(m), (p) => push({ type: "download.progress", name: msg.name, pct: Math.round(p?.percentage ?? 0) }));
+      return reply({ name: msg.name, cached: true });
+    }
+    case "model.delete": {
+      const m = constantFor(msg.name);
+      if (!m) return fail(`unknown or non-catalog model: ${msg.name}`);
+      const removed = deleteCached(m);
+      return reply({ name: msg.name, removed });
+    }
 
     case "rag.ingest": {
       const paths = (msg.paths && msg.paths.length) ? msg.paths : vault.list().map((f) => f.path);

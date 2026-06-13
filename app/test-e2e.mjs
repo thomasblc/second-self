@@ -122,6 +122,15 @@ async function main() {
     ok(cbase.contentText && cbase.contentText.length > 0, "chat (base) returns a non-empty answer");
     const cmem = await req("chat.send", { message: "What is beta about?", baseKey: "1.7b", voice: false, memory: true });
     ok(cmem.hits && cmem.hits.length > 0, `chat (memory) retrieves hits (${cmem.hits?.length})`);
+
+    const cat = await req("model.catalog");
+    ok(cat.models.length >= 8, `model catalog returns the curated set (${cat.models.length})`);
+    ok(cat.models.some((m) => m.name === "QWEN3_4B_INST_Q4_K_M" && m.fineTunable), "catalog marks Qwen3 4B fine-tunable");
+    ok(cat.models.some((m) => m.hf && m.hf.startsWith("https://huggingface.co/")), "catalog exposes Hugging Face links");
+    ok(cat.models.some((m) => m.group === "embedding"), "catalog includes an embedding model");
+    // download an already-cached model -> exercises the op without a big fetch
+    const dl = await req("model.download", { name: "EMBEDDINGGEMMA_300M_Q4_0" });
+    ok(dl.cached, "model.download completes (embedder, cached)");
   }
 
   if (WITH_TRAIN) {

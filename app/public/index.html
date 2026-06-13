@@ -13,6 +13,7 @@
     <button class="rail-btn active" data-pane="vault" title="Vault (notes)" aria-label="Vault" aria-current="page">&#9776;</button>
     <button class="rail-btn" data-pane="graph" title="Graph + Train" aria-label="Graph and Train">&#9683;</button>
     <button class="rail-btn" data-pane="chat" title="Chat" aria-label="Chat">&#9993;</button>
+    <button class="rail-btn" data-pane="models" title="Models" aria-label="Models">&#10515;</button>
     <button class="rail-btn" id="btn-palette" title="Command palette (Cmd/Ctrl+K)" aria-label="Command palette">&#9000;</button>
     <div class="rail-spacer"></div>
     <button class="rail-btn" id="btn-settings" title="Settings" aria-label="Settings">&#9881;</button>
@@ -70,8 +71,7 @@
           <div class="row">base
             <select id="base-pick">
               <option value="1.7b">Qwen3 1.7B (proven, ~2h)</option>
-              <option value="4b">Qwen3 4B (sharper, ~4-5h)</option>
-              <option value="8b">Qwen3 8B (best, overnight)</option>
+              <option value="4b">Qwen3 4B (recommended, ~4-5h)</option>
               <option value="600m">Qwen3 0.6B (fast, weak)</option>
             </select>
           </div>
@@ -105,6 +105,17 @@
       <div class="chat-input">
         <textarea id="chat-text" placeholder="Ask anything... (Enter to send)"></textarea>
         <button class="btn primary" id="btn-send">Send</button>
+      </div>
+    </section>
+
+    <!-- MODELS -->
+    <section class="pane" id="models-pane">
+      <div class="models-wrap">
+        <div class="models-head">
+          <h2>Models</h2>
+          <p>Pick the model your second self runs on. Everything downloads once into <code>~/.qvac/models</code>, is shared across the app, and stays on your machine. Open models link to their weights on Hugging Face. The recommended base to train your voice on is <b>Qwen3 4B</b>.</p>
+        </div>
+        <div id="models-list"><div class="empty">loading catalog...</div></div>
       </div>
     </section>
   </div>

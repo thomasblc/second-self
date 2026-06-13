@@ -55,11 +55,12 @@ applyTheme(localStorage.getItem("ss-theme") || "dark");
 document.querySelectorAll(".theme-dot").forEach((d) => d.onclick = () => applyTheme(d.dataset.t));
 
 // ============================================================ pane switching
-const panes = { vault: "vault-pane", graph: "graph-pane", chat: "chat-pane" };
+const panes = { vault: "vault-pane", graph: "graph-pane", chat: "chat-pane", models: "models-pane" };
 function switchPane(name) {
   document.querySelectorAll(".rail-btn[data-pane]").forEach((x) => { const on = x.dataset.pane === name; x.classList.toggle("active", on); if (on) x.setAttribute("aria-current", "page"); else x.removeAttribute("aria-current"); });
   Object.entries(panes).forEach(([k, id]) => $(id).classList.toggle("active", k === name));
   if (name === "graph") { ensureGraph(); sizeGraph(); }
+  if (name === "models") ensureModels();
 }
 document.querySelectorAll(".rail-btn[data-pane]").forEach((b) => b.onclick = () => switchPane(b.dataset.pane));
 
@@ -372,6 +373,59 @@ async function send() {
 $("btn-send").onclick = send;
 chatText.addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } });
 
+// ============================================================ models pane
+let modelsLoaded = false;
+const GROUP_TITLES = { voice: "Train your voice on these (fine-tunable bases)", chat: "Chat models", embedding: "Embeddings" };
+async function ensureModels(force) {
+  if (modelsLoaded && !force) return;
+  const el = $("models-list"); el.innerHTML = `<div class="empty"><span class="spin"></span> loading catalog...</div>`;
+  try { const d = await request("model.catalog"); renderModels(d.models); modelsLoaded = true; }
+  catch (e) { el.innerHTML = `<div class="empty">could not load catalog: ${escapeHtml(e.message)}</div>`; }
+}
+function renderModels(models) {
+  const el = $("models-list"); el.innerHTML = "";
+  for (const group of ["voice", "chat", "embedding"]) {
+    const list = models.filter((m) => m.group === group);
+    if (!list.length) continue;
+    const g = document.createElement("div"); g.className = "model-group";
+    g.innerHTML = `<h3>${GROUP_TITLES[group]}</h3>`;
+    for (const m of list) g.appendChild(modelCard(m));
+    el.appendChild(g);
+  }
+}
+function modelCard(m) {
+  const card = document.createElement("div"); card.className = "model-card"; card.dataset.name = m.name;
+  const src = m.hf ? `<a class="mc-hf" href="${m.hf}" target="_blank" rel="noopener">Hugging Face &#8599;</a>` : `<span class="mc-hf" style="color:var(--mut)">QVAC registry</span>`;
+  card.innerHTML = `<div class="mc-main">
+      <div class="mc-title">${escapeHtml(m.label)} ${m.fineTunable ? '<span class="mc-badge ft">fine-tunable</span>' : ""} <span class="mc-badge">${m.params} · ${m.quant}</span></div>
+      <div class="mc-meta">${m.sizeGB} GB · ${m.engine.replace("llamacpp-", "")}</div>
+      <div class="mc-note">${escapeHtml(m.note)} · ${src}</div>
+    </div>
+    <div class="mc-actions"><div class="status"></div><div class="mc-bar"><div></div></div></div>`;
+  renderCardStatus(card, m);
+  return card;
+}
+function renderCardStatus(card, m) {
+  const st = card.querySelector(".status"); st.innerHTML = "";
+  if (m.cached) {
+    st.innerHTML = `<span class="mc-cached">&#10003; Downloaded</span>`;
+    const del = document.createElement("button"); del.className = "btn danger"; del.textContent = "Delete"; del.style.marginTop = "4px";
+    del.onclick = async () => { if (!confirm(`Delete ${m.label} from your machine?`)) return; try { await request("model.delete", { name: m.name }); m.cached = false; renderCardStatus(card, m); toast(`Deleted ${m.label}`); } catch (e) { toast(e.message, "bad"); } };
+    st.appendChild(del);
+  } else {
+    const dl = document.createElement("button"); dl.className = "btn primary"; dl.textContent = `Download ${m.sizeGB} GB`;
+    dl.onclick = () => downloadModel(card, m, dl);
+    st.appendChild(dl);
+  }
+}
+async function downloadModel(card, m, btn) {
+  btn.disabled = true; btn.textContent = "downloading...";
+  const bar = card.querySelector(".mc-bar"); bar.style.display = "block"; card._dl = bar.firstElementChild;
+  try { await request("model.download", { name: m.name }); m.cached = true; renderCardStatus(card, m); bar.style.display = "none"; toast(`${m.label} is ready`); }
+  catch (e) { btn.disabled = false; btn.textContent = `Download ${m.sizeGB} GB`; bar.style.display = "none"; toast("Download failed: " + e.message, "bad"); }
+}
+on("download.progress", (m) => { const card = document.querySelector(`.model-card[data-name="${m.name}"]`); if (card && card._dl) card._dl.style.width = Math.min(100, m.pct) + "%"; });
+
 // ============================================================ command palette + quick switcher
 const palette = $("palette"), paletteInput = $("palette-input"), paletteList = $("palette-list");
 let palSel = 0, palItems = [];
@@ -381,6 +435,7 @@ function commands() {
     { ico: "◰", label: "Go to Vault", run: () => switchPane("vault") },
     { ico: "◓", label: "Go to Graph + Train", run: () => switchPane("graph") },
     { ico: "✉", label: "Go to Chat", run: () => switchPane("chat") },
+    { ico: "⤓", label: "Models: download / manage", run: () => switchPane("models") },
     { ico: "◑", label: "Cycle theme (dark / light / QVAC)", run: cycleTheme },
     { ico: "◉", label: "Build knowledge graph", run: () => { switchPane("graph"); $("btn-graph-build").click(); } },
     { ico: "✨", label: "Add semantic links", run: () => { switchPane("graph"); $("btn-graph-embed").click(); } },
