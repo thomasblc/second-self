@@ -15,6 +15,10 @@ Second Self is a local, Obsidian-style notes vault that can also train a small A
 - **On-device LoRA training.** One click fine-tunes a small base model (Qwen3 0.6B / 1.7B / 4B, all Q4_0) on your selected notes, with a live loss/ETA panel. The output is one small adapter file you own.
 - **A model picker.** Browse QVAC-SDK-compatible models (fine-tunable voice bases, chat models, and embedders) with their Hugging Face links and sizes, download any of them in one click with a progress bar, and delete to reclaim disk. Everything caches in `~/.qvac/models`, shared across the app.
 - **Chat with your second self.** Switch between the base model and your fine-tuned one, and toggle **Voice** (your LoRA) and **Memory** (retrieval over your vault) to feel the difference.
+- **An agent that knows your vault.** Turn on **Agent** mode and the model can search, read (and, with read+edit permission, write) your notes when you ask. Permission levels (read-only / read+edit) keep you in control; vault tools run locally, only completions use the model.
+- **Remote inference over P2P.** "Share this machine's GPU" turns a spare machine (e.g. a Mac mini) into a QVAC provider; "Connect to a remote machine" delegates your chat + agent completions to it over the P2P DHT, while your vault stays on your laptop. Headless host: `npm run provide`.
+- **Hardware-aware model picks.** The Models pane detects your RAM/GPU and recommends which model you can comfortably run and train, with per-model fit badges.
+- **Vault that stays current.** External edits or a folder synced via iCloud/Dropbox/git refresh the tree + graph live. Import your ChatGPT / Claude conversation exports as notes to enrich the graph.
 - **Three themes** (dark, light, and a QVAC-brand "original"), a **command palette** (Cmd/Ctrl+K), a quick switcher (Cmd/Ctrl+O), and a first-run tour.
 
 > Fine-tuning needs a Q4_0 / Q8_0 / F16 base, so the trainable bases are Qwen3 0.6B / 1.7B / 4B. Larger Q4_K_M models (e.g. Qwen3 8B) are great to chat with but cannot be fine-tuned.
@@ -80,7 +84,17 @@ The suite spawns the server against a throwaway vault on a test port and drives 
 
 ## Built with QVAC
 
-Second Self runs on the [QVAC SDK](https://github.com/tetherto/qvac) (`@qvac/sdk`, Apache 2.0): `loadModel`, `finetune`, `completion`, `embed`, `ragIngest`, `ragSearch`. On-device LLMs, embeddings, and fine-tuning in one `npm install`.
+Second Self runs on the [QVAC SDK](https://github.com/tetherto/qvac) (`@qvac/sdk`, Apache 2.0): `loadModel` (with tool-calling + LoRA + `delegate`), `finetune`, `completion`, `embed`, `ragIngest`/`ragSearch`, `downloadAsset`, and `startQVACProvider` for P2P delegated inference. On-device LLMs, embeddings, fine-tuning, and peer-to-peer model serving in one `npm install`.
+
+### Remote inference (run the model on another machine)
+
+On the machine with the GPU (e.g. a home server):
+
+```bash
+npm run provide   # prints a pairing code (its public key). Keep it running.
+```
+
+In Second Self on your laptop: Settings -> "Connect to a remote machine" -> paste the code. Your chat and agent completions now run on that machine; your vault, retrieval, and tools stay local. Set `QVAC_HYPERSWARM_SEED` on the host for a stable pairing code across restarts.
 
 ## License
 
