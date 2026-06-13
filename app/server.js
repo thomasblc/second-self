@@ -13,6 +13,7 @@ import { ModelManager, topKPairs, cosine, BASES } from "./lib/models.js";
 import { buildRecords, selectByEmbedding, refineWithLLM, buildCausalDataset } from "./lib/select.js";
 import { Trainer } from "./lib/train.js";
 import { buildCatalog, constantFor, modelTypeFor, deleteCached } from "./lib/catalog.js";
+import { hardwareInfo, fit, recommend } from "./lib/hardware.js";
 
 const APP_DIR = path.dirname(fileURLToPath(import.meta.url));
 const RECIPE_ROOT = path.resolve(APP_DIR, "..");
@@ -161,7 +162,13 @@ async function handle(type, msg, { reply, fail, push }) {
 
     case "model.status": return reply(mm.status());
     case "model.warm": { await mm.ensureLLM({ baseKey: msg.baseKey || "1.7b" }); return reply(mm.status()); }
-    case "model.catalog": return reply({ models: buildCatalog() });
+    case "model.catalog": {
+      const models = buildCatalog();
+      const hw = hardwareInfo();
+      for (const m of models) m.fit = fit(m, hw);
+      return reply({ models, hardware: hw, recommend: recommend(models, hw) });
+    }
+    case "model.hardware": { const hw = hardwareInfo(); return reply({ ...hw, recommend: recommend(buildCatalog(), hw) }); }
     case "model.download": {
       const m = constantFor(msg.name);
       if (!m) return fail(`unknown or non-catalog model: ${msg.name}`);

@@ -5,17 +5,17 @@
 import {
   loadModel, unloadModel, completion, embed,
   ragIngest, ragSearch, ragCloseWorkspace, ragDeleteWorkspace,
-  QWEN3_1_7B_INST_Q4, QWEN3_4B_INST_Q4_SHARD, QWEN3_8B_INST_Q4_K_M, QWEN3_600M_INST_Q4,
+  QWEN3_1_7B_INST_Q4, MEDGEMMA_4B_IT_Q8_0, QWEN3_8B_INST_Q4_K_M, QWEN3_600M_INST_Q4,
   EMBEDDINGGEMMA_300M_Q4_0,
 } from "@qvac/sdk";
 
 // Same keys as spike/finetune.js so a LoRA trained there loads here on the SAME base.
-// 4b is the Q4_0 SHARD (the fine-tunable 4B; Q4_K_M cannot be fine-tuned, so a 4B adapter
-// must load on the shard). 8b is Q4_K_M = chat-only (no fine-tunable 8B in the SDK).
+// 4b is MedGemma-4B Q8_0 (the only genuinely fine-tunable ~4B; every Qwen3-4B/8B constant
+// is Q4_K_M and the finetuner rejects that). 8b is Q4_K_M = chat-only.
 export const BASES = {
   "600m": QWEN3_600M_INST_Q4,
   "1.7b": QWEN3_1_7B_INST_Q4,
-  "4b": QWEN3_4B_INST_Q4_SHARD,
+  "4b": MEDGEMMA_4B_IT_Q8_0,
   "8b": QWEN3_8B_INST_Q4_K_M,
 };
 

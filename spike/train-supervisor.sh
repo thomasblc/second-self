@@ -41,17 +41,26 @@ while [ ! -f "$ADAPTER" ] && [ "$attempt" -lt "$MAX_ATTEMPTS" ]; do
   TPID=$!
   log "attempt $attempt: pid $TPID, log $RLOG"
 
-  last_size=0; stall=0
+  # Hang detection: the real failure mode was a worker LOCK *after* a checkpoint, i.e. once
+  # training had started. Model download + load are legitimately silent for minutes (the
+  # registry client does not log per-chunk), so a log-byte stall before the first step is NOT
+  # a hang. So: only stall-kill once a training step has appeared; before that, allow a long
+  # load/download phase (45 min) before giving up.
+  last_size=0; stall=0; started=0; elapsed=0
   while kill -0 "$TPID" 2>/dev/null; do
-    sleep "$POLL"
+    sleep "$POLL"; elapsed=$((elapsed+POLL))
     cur_size=$(wc -c < "$RLOG" 2>/dev/null || echo 0)
-    if [ "$cur_size" -eq "$last_size" ]; then stall=$((stall+POLL)); else stall=0; last_size=$cur_size; fi
+    if [ "$cur_size" -ne "$last_size" ]; then stall=0; last_size=$cur_size; else stall=$((stall+POLL)); fi
     step=$(grep -oE "step [0-9]+" "$RLOG" 2>/dev/null | tail -1)
-    setstatus "attempt $attempt: ${step:-loading} | stall ${stall}s | $(date '+%H:%M:%S')"
-    if [ "$stall" -ge "$HANG_SECS" ]; then
-      log "attempt $attempt: HUNG at ${step:-?} (no progress ${stall}s). killing + retrying."
-      kill -9 "$TPID" 2>/dev/null; killall_train
-      break
+    [ -n "$step" ] && started=1
+    setstatus "attempt $attempt: ${step:-loading} | stall ${stall}s | elapsed ${elapsed}s | started=${started} | $(date '+%H:%M:%S')"
+    if [ "$started" -eq 1 ] && [ "$stall" -ge "$HANG_SECS" ]; then
+      log "attempt $attempt: HUNG post-step at ${step} (no progress ${stall}s). killing + retrying."
+      kill -9 "$TPID" 2>/dev/null; killall_train; break
+    fi
+    if [ "$started" -eq 0 ] && [ "$elapsed" -ge 2700 ]; then
+      log "attempt $attempt: stuck in load/download >45min with no first step. killing + retrying."
+      kill -9 "$TPID" 2>/dev/null; killall_train; break
     fi
   done
   wait "$TPID" 2>/dev/null

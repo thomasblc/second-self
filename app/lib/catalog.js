@@ -13,11 +13,11 @@ const MODELS_DIR = path.join(os.homedir(), ".qvac", "models");
 const CURATED = [
   { name: "QWEN3_600M_INST_Q4", group: "voice", fineTunable: true, label: "Qwen3 0.6B", note: "Fastest to train. Weak in long-form; great for a first demo." },
   { name: "QWEN3_1_7B_INST_Q4", group: "voice", fineTunable: true, label: "Qwen3 1.7B", note: "Proven sweet spot, and the mobile target. ~2h to train." },
-  { name: "QWEN3_4B_INST_Q4_SHARD", group: "voice", fineTunable: true, label: "Qwen3 4B (Q4_0)", note: "Recommended base to train your voice. Sharper + more coherent. ~4-5h." },
+  { name: "MEDGEMMA_4B_IT_Q8_0", group: "voice", fineTunable: true, label: "MedGemma 4B (Q8_0)", note: "The biggest fine-tunable base: an 8-bit Gemma-3-4B. Sharper, more coherent. ~4-6h to train." },
   { name: "QWEN3_8B_INST_Q4_K_M", group: "chat", fineTunable: false, label: "Qwen3 8B", note: "Largest Qwen3. Chat only (Q4_K_M cannot be fine-tuned)." },
+  { name: "QWEN3_4B_INST_Q4_K_M", group: "chat", fineTunable: false, label: "Qwen3 4B", note: "Chat only (Q4_K_M cannot be fine-tuned; use MedGemma 4B to train a 4B voice)." },
   { name: "LLAMA_3_2_1B_INST_Q4_0", group: "chat", fineTunable: false, label: "Llama 3.2 1B", note: "Meta's compact instruct model. Q4_0, also fine-tunable." },
   { name: "SALAMANDRATA_2B_INST_Q4", group: "chat", fineTunable: false, label: "SalamandraTA 2B", note: "Multilingual / translation focused." },
-  { name: "MEDGEMMA_4B_IT_Q4_1", group: "chat", fineTunable: false, label: "MedGemma 4B", note: "Medical question-answering (Google MedGemma)." },
   { name: "GPT_OSS_20B_INST_Q4_K_M", group: "chat", fineTunable: false, label: "GPT-OSS 20B", note: "Largest text model. Needs ~12 GB free RAM to run." },
   { name: "EMBEDDINGGEMMA_300M_Q4_0", group: "embedding", fineTunable: false, label: "EmbeddingGemma 300M", note: "Default. Powers the knowledge graph + memory retrieval." },
 ];

@@ -379,11 +379,17 @@ const GROUP_TITLES = { voice: "Train your voice on these (fine-tunable bases)", 
 async function ensureModels(force) {
   if (modelsLoaded && !force) return;
   const el = $("models-list"); el.innerHTML = `<div class="empty"><span class="spin"></span> loading catalog...</div>`;
-  try { const d = await request("model.catalog"); renderModels(d.models); modelsLoaded = true; }
+  try { const d = await request("model.catalog"); renderModels(d.models, d.hardware, d.recommend); modelsLoaded = true; }
   catch (e) { el.innerHTML = `<div class="empty">could not load catalog: ${escapeHtml(e.message)}</div>`; }
 }
-function renderModels(models) {
+function renderModels(models, hw, rec) {
   const el = $("models-list"); el.innerHTML = "";
+  if (hw) {
+    const b = document.createElement("div"); b.className = "hw-banner";
+    b.innerHTML = `<div><span class="hw-ico">🖥️</span> <b>Your machine:</b> ${hw.ramGB} GB RAM · ${escapeHtml(hw.gpu)} · ${hw.cpus} cores</div>
+      <div style="margin-top:4px"><b>Recommended:</b> chat up to <span style="color:var(--accent)">${escapeHtml(rec?.chat || "?")}</span>, train up to <span style="color:var(--accent)">${escapeHtml(rec?.train || "?")}</span></div>`;
+    el.appendChild(b);
+  }
   for (const group of ["voice", "chat", "embedding"]) {
     const list = models.filter((m) => m.group === group);
     if (!list.length) continue;
@@ -396,8 +402,13 @@ function renderModels(models) {
 function modelCard(m) {
   const card = document.createElement("div"); card.className = "model-card"; card.dataset.name = m.name;
   const src = m.hf ? `<a class="mc-hf" href="${m.hf}" target="_blank" rel="noopener">Hugging Face &#8599;</a>` : `<span class="mc-hf" style="color:var(--mut)">QVAC registry</span>`;
+  const fitLabel = { ok: "runs well", tight: "runs (tight)", "too-big": "too big to run" };
+  const fitClass = { ok: "ok", tight: "tight", "too-big": "big" };
+  const f = m.fit || {};
+  const runBadge = f.run ? `<span class="fit fit-${fitClass[f.run]}">${fitLabel[f.run]}</span>` : "";
+  const trainBadge = (m.fineTunable && f.train && f.train !== "n/a") ? `<span class="fit fit-${fitClass[f.train]}">trains: ${f.train === "too-big" ? "too big" : f.train}</span>` : "";
   card.innerHTML = `<div class="mc-main">
-      <div class="mc-title">${escapeHtml(m.label)} ${m.fineTunable ? '<span class="mc-badge ft">fine-tunable</span>' : ""} <span class="mc-badge">${m.params} · ${m.quant}</span></div>
+      <div class="mc-title">${escapeHtml(m.label)} ${m.fineTunable ? '<span class="mc-badge ft">fine-tunable</span>' : ""} <span class="mc-badge">${m.params} · ${m.quant}</span> ${runBadge} ${trainBadge}</div>
       <div class="mc-meta">${m.sizeGB} GB · ${m.engine.replace("llamacpp-", "")}</div>
       <div class="mc-note">${escapeHtml(m.note)} · ${src}</div>
     </div>

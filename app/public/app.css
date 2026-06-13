@@ -205,6 +205,12 @@ select, .num { background: var(--bg); border: 1px solid var(--line); color: var(
 .models-head h2 { font-family: var(--display); margin: 0 0 6px; font-size: 22px; }
 .models-head p { color: var(--mut); line-height: 1.6; max-width: 660px; }
 .models-head code { font-family: var(--mono); background: var(--bg3); padding: 1px 5px; border-radius: 4px; font-size: 12px; }
+.hw-banner { background: var(--bg2); border: 1px solid var(--line); border-left: 3px solid var(--accent); border-radius: 10px; padding: 12px 14px; margin-top: 16px; font-size: 13px; line-height: 1.5; }
+.hw-banner .hw-ico { margin-right: 4px; }
+.fit { font-size: 10px; padding: 1px 7px; border-radius: 10px; border: 1px solid var(--line); }
+.fit-ok { color: var(--accent); border-color: var(--accent); }
+.fit-tight { color: var(--warn); border-color: var(--warn); }
+.fit-big { color: var(--bad); border-color: var(--bad); }
 .model-group { margin-top: 24px; }
 .model-group h3 { font-size: 12px; text-transform: uppercase; letter-spacing: .5px; color: var(--mut); margin: 0 0 10px; }
 .model-card { display: flex; align-items: center; gap: 14px; background: var(--bg2); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; margin-bottom: 10px; transition: border-color .15s; }
