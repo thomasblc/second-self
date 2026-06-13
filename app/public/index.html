@@ -98,6 +98,8 @@
         <label class="toggle"><input type="checkbox" id="tg-voice"> Voice (your LoRA)</label>
         <select id="chat-adapter" class="num" style="display:none"></select>
         <label class="toggle"><input type="checkbox" id="tg-memory"> Memory (your notes)</label>
+        <label class="toggle" title="Let the model use tools to find, read (and optionally edit) your notes"><input type="checkbox" id="tg-agent"> Agent</label>
+        <select id="agent-perm" class="num" style="display:none"><option value="read">read-only</option><option value="edit">read + edit</option></select>
         <button class="btn" id="btn-ingest" title="Index the vault for retrieval">Index vault for memory</button>
         <span id="chat-model-state" style="margin-left:auto;color:var(--mut);font-size:11px"></span>
       </div>
@@ -124,6 +126,7 @@
 <div id="footer">
   <span><span class="tag-local">&#9679; LOCAL</span> vault, embeddings, training, chat all on this machine</span>
   <span class="tag-net">&#9679; NETWORK</span><span style="color:var(--mut)">only the first-run model download</span>
+  <span id="remote-state" style="cursor:pointer"></span>
   <span id="status-line">connecting... <span class="kbd">Cmd K</span></span>
 </div>
 
@@ -135,6 +138,8 @@
     <button class="theme-dot" data-t="original" title="QVAC" aria-label="QVAC theme" style="background:#0b0f0d"></button>
   </span></div>
   <div class="menu-item" id="set-vault">&#128193; Change vault folder</div>
+  <div class="menu-item" id="set-share">&#128225; Share this machine's GPU (remote inference)</div>
+  <div class="menu-item" id="set-remote">&#9889; Connect to a remote machine</div>
   <div class="menu-item" id="set-newvault">&#10133; Create a new vault folder</div>
   <div class="menu-item" id="set-import">&#128229; Import ChatGPT / Claude chats</div>
   <div class="menu-item" id="set-onboard">&#10024; Show welcome tour</div>

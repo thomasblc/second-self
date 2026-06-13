@@ -147,6 +147,8 @@ select, .num { background: var(--bg); border: 1px solid var(--line); color: var(
 .msg.assistant { align-self: flex-start; }
 .msg.assistant .who { color: var(--link); font-size: 11px; margin-bottom: 4px; font-family: var(--display); }
 .msg .hits { font-size: 11px; color: var(--mut); margin-top: 8px; border-top: 1px dashed var(--line); padding-top: 6px; }
+.agent-acts { font-size: 11px; color: var(--mut); margin-bottom: 6px; border-left: 2px solid var(--accent); padding-left: 8px; }
+.agent-act { padding: 1px 0; font-family: var(--mono); }
 .hit-score { color: var(--accent); font-family: var(--mono); }
 .chat-input { display: flex; gap: 8px; padding: 12px; border-top: 1px solid var(--line); background: var(--bg2); }
 .chat-input textarea { flex: 1; background: var(--bg); border: 1px solid var(--line); color: var(--fg); border-radius: 8px; padding: 10px 12px; resize: none; font-family: var(--sans); font-size: 13px; height: 44px; }

@@ -355,6 +355,18 @@ tgVoice.onchange = () => {
   chatAdapter.style.display = tgVoice.checked ? "" : "none";
 };
 chatAdapter.onchange = () => { const o = chatAdapter.selectedOptions[0]; if (o) chatBase.value = o.dataset.base; };
+const tgAgent = $("tg-agent"), agentPerm = $("agent-perm");
+tgAgent.onchange = () => { agentPerm.style.display = tgAgent.checked ? "" : "none"; if (tgAgent.checked) { tgMemory.checked = false; } };
+on("agent.tool", (m) => {
+  if (!curAssistantEl) return;
+  let act = curAssistantEl.querySelector(".agent-acts");
+  if (!act) { act = document.createElement("div"); act.className = "agent-acts"; curAssistantEl.insertBefore(act, curAssistantEl.querySelector(".body")); }
+  const ico = m.name === "write_note" ? "✏️" : m.name === "read_note" ? "📄" : m.name === "list_notes" ? "🗂️" : "🔎";
+  const arg = (m.args && (m.args.query || m.args.path)) || "";
+  const line = document.createElement("div"); line.className = "agent-act"; line.textContent = `${ico} ${m.name.replace("_", " ")} ${arg}`.trim();
+  act.appendChild(line); messages.scrollTop = messages.scrollHeight;
+});
+on("agent.edited", (m) => { toast("Agent edited " + m.path, "warn"); loadFiles().catch(() => {}); });
 async function ingest() {
   const btn = $("btn-ingest"); btn.textContent = "indexing..."; btn.disabled = true;
   try { const d = await request("rag.ingest", { paths: selection.size ? [...selection] : undefined }); btn.textContent = `indexed ${d.ingested} docs ✓`; toast(`Indexed ${d.ingested} docs (${d.chunks} chunks)`); }
@@ -376,6 +388,18 @@ async function send() {
   chatBusy = true; $("btn-send").disabled = true; chatText.value = "";
   addMsg("user", text);
   curAssistantEl = addMsg("assistant", ""); curAssistantEl.querySelector(".body").innerHTML = `<span class="spin"></span>`; curAssistantEl._raw = "";
+  if (tgAgent.checked) {
+    const baseKey = chatBase.value, permission = agentPerm.value;
+    $("chat-model-state").textContent = `agent (${permission}) · ${baseKey} working...`;
+    try {
+      const d = await request("agent.chat", { message: text, history, baseKey, permission });
+      history.push({ role: "user", content: text }, { role: "assistant", content: d.contentText });
+      if (history.length > 12) history = history.slice(-12);
+      $("chat-model-state").textContent = `agent · ${baseKey} · ${(d.actions || []).length} tool calls`;
+    } catch (e) { curAssistantEl.querySelector(".body").innerHTML = `<span style="color:var(--bad)">${escapeHtml(e.message)}</span>`; $("chat-model-state").textContent = ""; }
+    finally { chatBusy = false; $("btn-send").disabled = false; }
+    return;
+  }
   const voice = tgVoice.checked, memory = tgMemory.checked;
   const adapter = voice && chatAdapter.value ? chatAdapter.value : null, baseKey = chatBase.value;
   $("chat-model-state").textContent = `loading ${baseKey}${adapter ? "+LoRA" : ""}${memory ? "+memory" : ""}...`;
@@ -467,6 +491,8 @@ function commands() {
     { ico: "⤓", label: "Models: download / manage", run: () => switchPane("models") },
     { ico: "➕", label: "Create a new vault folder", run: createVaultFlow },
     { ico: "📥", label: "Import ChatGPT / Claude conversations", run: importCloudFlow },
+    { ico: "📡", label: "Share this machine's GPU (remote inference)", run: shareGpu },
+    { ico: "⚡", label: "Connect to a remote machine", run: connectRemote },
     { ico: "◑", label: "Cycle theme (dark / light / QVAC)", run: cycleTheme },
     { ico: "◉", label: "Build knowledge graph", run: () => { switchPane("graph"); $("btn-graph-build").click(); } },
     { ico: "✨", label: "Add semantic links", run: () => { switchPane("graph"); $("btn-graph-embed").click(); } },
@@ -536,6 +562,36 @@ async function importCloudFlow() {
   toast("Importing conversations...");
   try { const r = await request("import.cloud", { path: p }); toast(`Imported ${r.written} ${r.source} conversations into ${r.folder}`); await loadFiles(); }
   catch (e) { toast("Import failed: " + e.message, "bad"); }
+}
+// ---- remote / delegated inference ----
+$("set-share").onclick = shareGpu;
+$("set-remote").onclick = connectRemote;
+$("remote-state").onclick = async () => { if (!confirm("Disconnect from the remote machine? Chat goes back to local.")) return; try { await request("remote.disconnect"); updateRemoteIndicator(); toast("Disconnected. Running locally."); } catch (e) { toast(e.message, "bad"); } };
+async function shareGpu() {
+  settingsMenu.classList.remove("show");
+  toast("Starting provider (this may take a few seconds)...");
+  try {
+    const d = await request("provider.start");
+    prompt("This machine is now sharing its GPU. Paste this pairing code into your other device (Settings -> Connect to a remote machine). Keep this app running to keep serving:", d.publicKey);
+    updateRemoteIndicator();
+  } catch (e) { toast("Could not start provider: " + e.message, "bad"); }
+}
+async function connectRemote() {
+  settingsMenu.classList.remove("show");
+  const pk = prompt("Paste the remote machine's pairing code (64-hex public key from its 'Share this machine's GPU'):");
+  if (!pk) return;
+  toast("Connecting to the remote machine...");
+  try { await request("remote.connect", { providerPublicKey: pk.trim(), baseKey: chatBase.value }); updateRemoteIndicator(); toast("Connected. Chat + agent now run on the remote machine; your vault stays here."); }
+  catch (e) { toast("Connect failed: " + e.message, "bad"); }
+}
+async function updateRemoteIndicator() {
+  try {
+    const s = await request("remote.status");
+    const el = $("remote-state");
+    if (s.remote) el.innerHTML = `<span style="color:var(--accent)">&#9889; running on remote</span>`;
+    else if (s.provider) el.innerHTML = `<span style="color:var(--accent2)">&#128225; sharing GPU</span>`;
+    else el.innerHTML = "";
+  } catch { /* */ }
 }
 async function changeVault() {
   settingsMenu.classList.remove("show");
@@ -618,7 +674,7 @@ $("brand").onclick = () => { brandClicks++; clearTimeout(brandTimer); brandTimer
 (async () => {
   const connected = await new Promise((r) => { let n = 0; const t = setInterval(() => { if (ws && ws.readyState === 1) { clearInterval(t); r(true); } else if (++n > 160) { clearInterval(t); r(false); } }, 50); });
   if (!connected) { toast("Can't reach the local server. Is `npm start` running?", "bad"); statusLine.textContent = "offline"; return; }
-  await loadFiles(); refreshAdapters();
+  await loadFiles(); refreshAdapters(); updateRemoteIndicator();
   // background build for backlinks; guard so it never clobbers a graph the user
   // already built+embedded while this was in flight (would silently drop embed edges).
   request("graph.build").then((g) => { if (!graphData) { graphData = g; if (current) renderBacklinks(current); } }).catch(() => {});

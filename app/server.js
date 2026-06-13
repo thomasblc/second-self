@@ -7,6 +7,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { WebSocketServer } from "ws";
+import { z } from "zod";
 import { Vault } from "./lib/vault.js";
 import { buildGraph, addEmbedEdges } from "./lib/graph.js";
 import { ModelManager, topKPairs, cosine, BASES } from "./lib/models.js";
@@ -116,11 +117,11 @@ wss.on("connection", (ws) => {
 
 // Ops that load an SDK model. While a training child holds the global ~/.qvac lock,
 // these would contend with it, so refuse them until the run finishes.
-const MODEL_OPS = new Set(["graph.embed", "graph.highlight", "select.auto", "select.refine", "model.warm", "model.download", "rag.ingest", "chat.send"]);
+const MODEL_OPS = new Set(["graph.embed", "graph.highlight", "select.auto", "select.refine", "model.warm", "model.download", "rag.ingest", "chat.send", "agent.chat", "provider.start", "remote.connect"]);
 
 async function handle(type, msg, { reply, fail, push }) {
   if (MODEL_OPS.has(type) && trainer.isRunning()) return fail("training in progress - try again when it finishes");
-  if ((type === "train.start" || type === "chat.send" || type === "model.warm") && msg.baseKey && !BASES[msg.baseKey]) {
+  if ((type === "train.start" || type === "chat.send" || type === "model.warm" || type === "agent.chat") && msg.baseKey && !BASES[msg.baseKey]) {
     return fail(`unknown base ${msg.baseKey}`);
   }
   switch (type) {
@@ -189,6 +190,18 @@ async function handle(type, msg, { reply, fail, push }) {
     }
 
     case "model.status": return reply(mm.status());
+    // ---- remote / delegated inference over QVAC P2P ----
+    case "provider.start": { const pk = await mm.startProvider(msg.allowedKeys); return reply({ publicKey: pk }); }
+    case "provider.stop": { await mm.stopProvider(); return reply({ stopped: true }); }
+    case "remote.status": return reply({ remote: mm.getRemote(), provider: mm.provider });
+    case "remote.connect": {
+      const pk = String(msg.providerPublicKey || "").trim();
+      if (!/^[0-9a-fA-F]{64}$/.test(pk)) return fail("the pairing code must be a 64-character hex public key");
+      mm.setRemote(pk);
+      try { await mm.ensureLLM({ baseKey: msg.baseKey && BASES[msg.baseKey] ? msg.baseKey : "1.7b" }); return reply({ connected: true, providerPublicKey: pk }); }
+      catch (e) { mm.setRemote(null); return fail("could not reach the remote machine: " + e.message); }
+    }
+    case "remote.disconnect": { mm.setRemote(null); return reply({ connected: false }); }
     case "model.warm": { await mm.ensureLLM({ baseKey: msg.baseKey || "1.7b" }); return reply(mm.status()); }
     case "model.catalog": {
       const models = buildCatalog();
@@ -243,6 +256,38 @@ async function handle(type, msg, { reply, fail, push }) {
     }
     case "train.stop": { trainer.stop(); return reply({ stopped: true }); }
 
+    case "agent.chat": {
+      // Agentic chat: the model uses vault tools to find/read (and, with edit permission, write)
+      // notes when you talk to it. Permission: "read" (default) or "edit".
+      const { message, history = [], baseKey = "1.7b", permission = "read" } = msg;
+      const tools = [
+        { name: "search_vault", description: "Search the owner's notes by keywords. Returns the most relevant note paths with snippets.", parameters: z.object({ query: z.string().describe("keywords to search for") }) },
+        { name: "read_note", description: "Read the full text of one note, by its vault-relative path.", parameters: z.object({ path: z.string().describe("e.g. projects/foo.md") }) },
+        { name: "list_notes", description: "List the paths of all notes in the vault.", parameters: z.object({}) },
+      ];
+      if (permission === "edit") tools.push({ name: "write_note", description: "Create or overwrite a note (only when the user asks you to write or edit). path is vault-relative.", parameters: z.object({ path: z.string(), content: z.string() }) });
+      const actions = [];
+      const executeTool = async (call) => {
+        const a = call.arguments || {};
+        if (call.name === "search_vault") { const r = vault.search(a.query || "", 6); actions.push({ tool: "search", arg: a.query }); return r.length ? r.map((x) => `- ${x.path}: ${x.snippet}`).join("\n") : "no matching notes"; }
+        if (call.name === "read_note") { actions.push({ tool: "read", arg: a.path }); try { return vault.read(a.path).slice(0, 4000); } catch { return "could not read " + a.path; } }
+        if (call.name === "list_notes") { actions.push({ tool: "list" }); return vault.list().map((f) => f.path).slice(0, 200).join("\n"); }
+        if (call.name === "write_note") {
+          if (permission !== "edit") return "permission denied: the vault is read-only for the agent";
+          try { vault.write(a.path, a.content || ""); invalidateCaches(); actions.push({ tool: "edit", arg: a.path }); push({ type: "agent.edited", path: a.path }); return "saved " + a.path; }
+          catch (e) { return "could not write " + a.path + ": " + e.message; }
+        }
+        return "unknown tool";
+      };
+      const sys = `You are the owner's second self with access to their note vault. Use the tools to FIND and READ their notes to answer well, citing the note paths you used. `
+        + (permission === "edit" ? "You may also create or edit notes with write_note when the owner asks." : "You can read notes but you may NOT edit them (the vault is read-only).");
+      const hist = [{ role: "system", content: sys }, ...history, { role: "user", content: message }];
+      push({ type: "chat.start" });
+      const { contentText } = await mm.agentChat(hist, { baseKey, tools, executeTool,
+        onToken: (t) => push({ type: "chat.token", text: t }),
+        onTool: (c) => push({ type: "agent.tool", name: c.name, args: c.arguments }) });
+      return reply({ contentText, actions, model: { baseKey, agent: true, permission } });
+    }
     case "chat.send": {
       const { message, history = [], baseKey = "1.7b", adapter = null, memory = false, voice = false } = msg;
       let lora = null;
