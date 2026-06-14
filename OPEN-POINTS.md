@@ -51,3 +51,45 @@ Verified `spike/master-loopback.mjs` (9/9, two processes over the real DHT): aft
 **Security model (reviewed):** the pairing code is a bearer capability (anyone holding it gets the master's vault, like the SDK delegate). A MASTER-SIDE allow-list (`TUNNEL_ALLOW` in `server.js`) restricts the tunnel to thin-client ops (vault list/read/info/search + note CRUD, graph, select, rag, model status/catalog/warm, chat, agent, train); it DENIES `vault.setRoot`/`createVault`/`switchVault`, `fs.browse`/`fs.mkdir`, `import.cloud` (unsandboxed read), `master.*`/`provider.*`/`remote.*` (no chaining), `config.set`, `model.download/delete`. Note CRUD stays confined to the master's vault root by `vault.js`. Satellite-side vault management is `LOCAL_ONLY` and leaves the master first.
 
 **Still needs:** a real two-machine off-LAN run (laptop as satellite of a Mac mini master) to confirm end to end. Set `QVAC_HYPERSWARM_SEED` on the master for a stable pairing code across restarts.
+
+## 5. Personal context engine (Phase A) - shipped + deferred optimizations
+
+**Shipped (2026-06-15):** `app/lib/context.js` - an on-device, source-tracked index. The vault is
+source #1; users add folders (Settings -> Memory & Sources). Chat Memory retrieves across all
+sources and the UI shows clickable citation chips built from the RETRIEVAL layer (the spike proved
+the model can't be trusted to cite). Crash-safe persistence (atomic-ish save + exact-byte-size load
+check), build-then-swap (re)index (a failed/empty re-index never wipes memory), one unified worker
+mutex (every load/completion/embed/unload serializes on the single ~/.qvac worker). Verified: context
+unit 13/13, concurrency 2/2, E2E 49/49 with models. Spike proof (retrieval quality on a real 103-doc
+corpus): the right source in top-k 5-6/6, 1187 chunks embedded in 9s; 1.7B answers correctly, 8B is
+cleaner. The make-or-break (retrieval + cited answers, 100% local) is validated.
+
+**Deferred optimizations (fine at personal scale; do before 50k+ chunks), from the full-app review:**
+- **Flat `Float32Array` vector store + pre-normalized dot-product** in `context.js`. Today vectors are
+  boxed `number[][]` in RAM (~8-12x a packed Float32) and `index.json` (all chunk text) + `vectors.bin`
+  are fully rewritten on every mutation; cosine is an O(n) scan on the event loop. Breaks ~50k chunks
+  (RAM > 1GB, query 60ms+ blocking, multi-hundred-ms saves). Cheapest fix: store one flat `Float32Array`
+  (vectors.bin is already flat), normalize at write, dot-product at query. Highest-impact perf item.
+- **Reuse embeddings across features.** `select.auto` re-embeds the vault prose a 3rd time (after the
+  graph's `ensureDocEmb` and the context index). Note-granularity passes (`select.auto` <-> `docEmb`)
+  can share a cache; key `docEmb` by note path + content hash for incremental rebuilds on `vault.changed`.
+- **Graph idle RAF:** `graph.js` keeps repainting at 60fps when settled (battery). Stop the RAF loop
+  once `alpha` is low and nothing is hovered/dragged; restart on interaction. Also a node cap / Barnes-Hut
+  only if 1000+ note vaults are a target.
+- **File-tree partial updates:** `renderTree()` rebuilds the whole tree on every note open / folder
+  toggle; toggle the `.active`/`collapsed` class instead. Bites at 2-3k+ notes.
+- **`reindex` is a full re-embed** (no mtime diffing, though `_walk` already captures mtime). Fine as a
+  deliberate user action; add incremental diffing later for "keep fresh".
+
+**Vault-switch <-> context coordination (P1, non-crashing):** after `switchVault`, the context index still
+holds the old vault's chunks until the user re-indexes; vault citation chips for the old vault open to a
+"note not found" toast. `rag.ingest` already re-points + reindexes on path change. Make `switchVault`
+mark the vault source stale (or auto-reindex) so Memory + citations track the active vault automatically.
+
+**SPEC.md is the pre-reframe build plan** (describes the old `me` RAG workspace + "RAG memory NOT built"
++ a 4B trainable base). README is current; SPEC should get a "superseded - see README" banner + the
+Memory/`me`-workspace and base-picker lines corrected.
+
+**Next connectors (Phase B+):** PDF/docx (needs a parser dep, breaks the zero-dep rule - decide), then
+calendar/contacts/browser-history (SQLite/ICS/vCard), then mail/messages/photos behind explicit consent
+("only the local model reads this"; Thomas: OK for Messages if the user authorizes).

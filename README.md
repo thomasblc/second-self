@@ -46,9 +46,10 @@ First training run or first chat downloads the base model into `~/.qvac/models` 
 
 ```
 Frontend (browser, vanilla JS)            Backend (Node + @qvac/sdk + ws)
-  Vault: editor + preview + search          vault: markdown file ops (sandboxed)
-  Graph + Train: force graph, auto-select   graph: link / tag / embed-similarity edges
-  Chat: Base vs Fine-tuned, Voice, Memory   models: loadModel / embed / completion / RAG
+  Notes: editor + preview + search          vault: markdown file ops (sandboxed)
+  Graph: force graph + semantic search      graph: link / tag / embed-similarity edges
+  Chat & Train: Memory + Voice + drawer     context: source-tracked index -> cited memory
+  Settings > Memory & Sources               models: loadModel / embed / completion
         |  WebSocket (ops, progress, tokens) train: finetune() -> versioned LoRA adapter
 ```
 
@@ -85,7 +86,7 @@ The suite spawns the server against a throwaway vault on a test port and drives 
 
 ## Built with QVAC
 
-Second Self runs on the [QVAC SDK](https://github.com/tetherto/qvac) (`@qvac/sdk`, Apache 2.0): `loadModel` (with tool-calling + LoRA + `delegate`), `finetune`, `completion`, `embed`, `ragIngest`/`ragSearch`, `downloadAsset`, and `startQVACProvider` for P2P delegated inference. On-device LLMs, embeddings, fine-tuning, and peer-to-peer model serving in one `npm install`.
+Second Self runs on the [QVAC SDK](https://github.com/tetherto/qvac) (`@qvac/sdk`, Apache 2.0): `loadModel` (with tool-calling + LoRA + `delegate`), `finetune`, `completion`, `embed`, and `startQVACProvider` for P2P delegated inference. Retrieval is a custom on-device context index built on `embed` (source-tracked, so citations are real); the model never leaves the device. On-device LLMs, embeddings, fine-tuning, and peer-to-peer model serving in one `npm install`.
 
 ### Remote inference (run the model on another machine)
 

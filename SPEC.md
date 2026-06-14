@@ -1,5 +1,12 @@
 # Second Self - full product spec (Thomas's build)
 
+> **SUPERSEDED in parts (2026-06-15).** This is the original pre-reframe build plan. The product
+> was recentred on a "personal context engine" (the vault is the first SOURCE of an on-device,
+> source-tracked index; fine-tuning is an optional layer). For current behavior see `README.md`
+> and `OPEN-POINTS.md`. Notably stale below: the "RAG over a `me` workspace" model (now
+> `ContextIndex` with per-chunk source + citations), "RAG memory NOT built" (built), and the 4B
+> trainable base (4B is Q4_K_M = chat-only; BitNet-3B is train-only; Qwen3-1.7B is the voice).
+
 **Status:** S0 = GO (voice proven at 1.7B, 2026-06-13). This is the concrete build spec, on top of the recipe template (`docs/content/recipes/23-second-self.md`).
 
 **What Second Self IS (corrected with Thomas, 2026-06-13):** a free, open-source, local **notes-vault app** that ALSO trains a model on you. One single app. Not a separate vault, not just a fine-tune tool.
