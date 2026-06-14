@@ -37,9 +37,9 @@ while [ ! -f "$ADAPTER" ] && [ "$attempt" -lt "$MAX_ATTEMPTS" ]; do
   killall_train; sleep 2
   rm -rf "$DIR/train/results-${DATASET}-${BASE}" "$DIR/train/checkpoints-${DATASET}-${BASE}"
 
-  # MedGemma-4B (Q8_0) destabilized at lr 5e-5 (loss 2.5 -> 3.9 over one epoch); use a lower
-  # lr for the 4B base so it keeps descending. Qwen3 600m/1.7b stay on the proven 5e-5 default.
-  LR_ARG=""; [ "$BASE" = "4b" ] && LR_ARG="--lr 2e-5"
+  # BitNet-3B (ternary TQ2_0): use a lower lr (a Gemma-4B run destabilized at 5e-5: 2.5->3.9).
+  # Qwen3 600m/1.7b stay on the proven 5e-5 default.
+  LR_ARG=""; [ "$BASE" = "3b" ] && LR_ARG="--lr 3e-5"
   node spike/finetune.js --data "$DATASET" --base "$BASE" --ctx 256 --epochs 1 $LR_ARG > "$RLOG" 2>&1 &
   TPID=$!
   log "attempt $attempt: pid $TPID, log $RLOG"
