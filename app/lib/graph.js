@@ -4,7 +4,7 @@
 // node GROUP (color), not edges, so dense vaults stay readable.
 import path from "node:path";
 
-// Resolve an Obsidian-style link target to a node path.
+// Resolve a wiki-style link target to a node path.
 // Accepts a wikilink name ("My Note"), a relative md path ("dir/My Note.md"),
 // or a bare basename. Match by exact relpath, then by basename (no ext), then title.
 function resolveTarget(target, byPath, byBase, byTitle) {

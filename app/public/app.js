@@ -18,7 +18,8 @@ function request(type, payload = {}) {
   });
 }
 function connect() {
-  ws = new WebSocket(`ws://${location.host}`);
+  const tok = window.__SS_TOKEN ? "?t=" + encodeURIComponent(window.__SS_TOKEN) : "";
+  ws = new WebSocket(`ws://${location.host}/${tok}`);
   ws.onopen = () => { statusLine.innerHTML = 'connected <span class="kbd">Cmd K</span>'; };
   ws.onclose = () => { statusLine.textContent = "disconnected, retrying..."; setTimeout(connect, 1500); };
   ws.onmessage = (e) => {
@@ -148,10 +149,15 @@ async function openNote(path) {
   current = path; dirty = false; readCache.set(path, d.content);
   noteTitle.textContent = path; editor.value = d.content;
   renderPreview(); renderBacklinks(path); saveState.textContent = "";
+  setEditMode(false); // open in read mode; the Edit button reveals the editor
   renderTree();
   if (!$("vault-pane").classList.contains("active")) switchPane("vault");
 }
-function confirmDiscard() { return !dirty || confirm("Discard unsaved changes?"); }
+function confirmDiscard() {
+  if (!dirty) return true;
+  if (confirm("Discard unsaved changes?")) { dirty = false; return true; } // clear dirty so a pending autosave can't fire post-switch
+  return false;
+}
 function renderPreview() {
   preview.innerHTML = renderMarkdown(editor.value);
   preview.querySelectorAll("[data-wikilink]").forEach((a) => {
@@ -171,6 +177,17 @@ editor.addEventListener("input", () => {
 });
 editor.addEventListener("keydown", (e) => { if ((e.metaKey || e.ctrlKey) && e.key === "s") { e.preventDefault(); saveNote(); } });
 $("btn-save").onclick = () => saveNote();
+
+// read vs edit: notes open in read (preview) mode; the Edit button reveals the textarea.
+const editorWrap = $("editor-wrap");
+function setEditMode(on) {
+  editorWrap.classList.toggle("mode-edit", on);
+  editorWrap.classList.toggle("mode-read", !on);
+  $("btn-edit-toggle").innerHTML = on ? "&#128065; Read" : "&#9998; Edit";
+  if (on) setTimeout(() => editor.focus(), 0);
+}
+$("btn-edit-toggle").onclick = () => setEditMode(!editorWrap.classList.contains("mode-edit"));
+
 async function saveNote(auto) {
   if (!current || !dirty) return;
   await request("vault.write", { path: current, content: editor.value });
@@ -241,7 +258,7 @@ graph.onClick = (n, e) => { if (e && e.shiftKey) toggleSelect(n.id); else openNo
 function sizeGraph() { const r = $("graph-left").getBoundingClientRect(); graph.resize(r.width, r.height); graph.reheat(); }
 window.addEventListener("resize", () => { if ($("graph-pane").classList.contains("active")) sizeGraph(); });
 async function ensureGraph() {
-  if (graphData) { graph.setData(graphData); return; }
+  if (graphData) { graph.setData(graphData); showGraphStats(); return; }
   $("graph-stats").textContent = "building...";
   graphData = await request("graph.build"); graph.setData(graphData); showGraphStats();
 }
@@ -294,7 +311,11 @@ on("vault.changed", async () => {
 // selection (training corpus)
 let selection = new Set();
 function toggleSelect(id) { selection.has(id) ? selection.delete(id) : selection.add(id); syncSelection(); }
-function syncSelection() { graph.setSelected(selection); $("sel-count").textContent = selection.size; }
+function syncSelection() {
+  graph.setSelected(selection); $("sel-count").textContent = selection.size;
+  const pill = $("graph-sel-pill");
+  if (pill) { if (selection.size) { pill.style.display = ""; pill.textContent = `${selection.size} selected to train`; } else pill.style.display = "none"; }
+}
 $("btn-sel-clear").onclick = () => { selection = new Set(); syncSelection(); };
 $("btn-autoselect").onclick = autoSelect;
 async function autoSelect() {
@@ -341,17 +362,46 @@ stopBtn.onclick = async () => { await request("train.stop"); stopBtn.disabled = 
 async function refreshAdapters() {
   const d = await request("train.adapters");
   const el = $("adapter-list"), sel = $("chat-adapter");
-  if (!d.adapters.length) { el.textContent = "none yet - train one in section 2"; sel.innerHTML = `<option value="" disabled>no adapter - train one first</option>`; return; }
-  el.innerHTML = d.adapters.map((a) => `<div>&#9679; ${a.file.replace("adapters/", "")} <span style="color:var(--mut)">(${a.baseKey}, ${a.sizeMB} MB)</span></div>`).join("");
-  sel.innerHTML = d.adapters.map((a) => `<option value="${a.file}" data-base="${a.baseKey}">${a.file.replace("adapters/", "")}</option>`).join("");
+  if (!d.adapters.length) { el.textContent = "none yet - train one in step 2 above"; sel.innerHTML = `<option value="" disabled>no adapter - train one first</option>`; return; }
+  const runnable = (a) => a.baseKey !== "3b"; // BitNet 3B trains, but inference is impractical in this SDK
+  el.innerHTML = d.adapters.map((a) => `<div>&#9679; ${a.file.replace("adapters/", "")} <span style="color:var(--mut)">(${a.baseKey}, ${a.sizeMB} MB${runnable(a) ? "" : " - train-only in this SDK"})</span></div>`).join("");
+  const voice = d.adapters.filter(runnable);
+  sel.innerHTML = voice.length
+    ? voice.map((a) => `<option value="${a.file}" data-base="${a.baseKey}">${a.file.replace("adapters/", "")}</option>`).join("")
+    : `<option value="" disabled>no runnable adapter yet - train on Qwen3 1.7B</option>`;
 }
+
+// ---- training drawer (inside the Chat tab) ----
+const chatPaneEl = $("chat-pane");
+function openTrainDrawer() { switchPane("chat"); chatPaneEl.classList.add("train-open"); }
+function closeTrainDrawer() { chatPaneEl.classList.remove("train-open"); }
+$("btn-train-open").onclick = () => chatPaneEl.classList.contains("train-open") ? closeTrainDrawer() : openTrainDrawer();
+$("btn-train-close").onclick = closeTrainDrawer;
+$("train-scrim").onclick = closeTrainDrawer;
+
+// ---- weekly auto-retrain (opt-in, persisted server-side) ----
+const tgAuto = $("tg-autoretrain"), autoInterval = $("autoretrain-interval");
+async function loadRetrainCfg() {
+  try { const c = await request("config.get"); tgAuto.checked = !!c.autoRetrain.enabled; autoInterval.value = String(c.autoRetrain.intervalDays || 7); $("autoretrain-row").style.display = tgAuto.checked ? "flex" : "none"; }
+  catch { /* */ }
+}
+function saveRetrainCfg() {
+  $("autoretrain-row").style.display = tgAuto.checked ? "flex" : "none";
+  request("config.set", { autoRetrain: { enabled: tgAuto.checked, intervalDays: Number(autoInterval.value), baseKey: $("base-pick").value } }).catch(() => {});
+}
+tgAuto.onchange = () => { saveRetrainCfg(); toast(tgAuto.checked ? "Auto-retrain on: it re-selects your notes and retrains in the background." : "Auto-retrain off."); };
+autoInterval.onchange = saveRetrainCfg;
+on("autoRetrain.start", () => toast("Auto-retrain started in the background.", "warn"));
+on("autoRetrain.skip", (m) => toast("Auto-retrain skipped: " + (m.reason || ""), "warn"));
+on("autoRetrain.done", (m) => { toast(m.ok ? "Auto-retrain finished. Your refreshed voice is ready in Chat." : "Auto-retrain ended without an adapter.", m.ok ? "" : "warn"); refreshAdapters(); });
+on("autoRetrain.error", (m) => toast("Auto-retrain error: " + (m.message || ""), "bad"));
 
 // ============================================================ chat
 const messages = $("messages"), chatText = $("chat-text"), tgVoice = $("tg-voice"), tgMemory = $("tg-memory"), chatAdapter = $("chat-adapter"), chatBase = $("chat-base");
 let history = [], curAssistantEl = null, chatBusy = false;
 tgVoice.onchange = () => {
   const hasAdapter = [...chatAdapter.options].some((o) => o.value);
-  if (tgVoice.checked && !hasAdapter) { tgVoice.checked = false; chatAdapter.style.display = "none"; toast("Train a LoRA first (Graph + Train), then turn on Voice.", "warn"); return; }
+  if (tgVoice.checked && !hasAdapter) { tgVoice.checked = false; chatAdapter.style.display = "none"; toast("Train your voice first (click 'Train your voice'), then turn on Voice.", "warn"); openTrainDrawer(); return; }
   chatAdapter.style.display = tgVoice.checked ? "" : "none";
 };
 chatAdapter.onchange = () => { const o = chatAdapter.selectedOptions[0]; if (o) chatBase.value = o.dataset.base; };
@@ -368,12 +418,14 @@ on("agent.tool", (m) => {
 });
 on("agent.edited", (m) => { toast("Agent edited " + m.path, "warn"); loadFiles().catch(() => {}); });
 async function ingest() {
-  const btn = $("btn-ingest"); btn.textContent = "indexing..."; btn.disabled = true;
-  try { const d = await request("rag.ingest", { paths: selection.size ? [...selection] : undefined }); btn.textContent = `indexed ${d.ingested} docs ✓`; toast(`Indexed ${d.ingested} docs (${d.chunks} chunks)`); }
-  catch (e) { btn.textContent = "index failed"; toast(e.message, "bad"); }
-  finally { btn.disabled = false; setTimeout(() => (btn.textContent = "Index vault for memory"), 2500); }
+  const btn = $("btn-ingest");
+  if (btn) { btn.textContent = "indexing..."; btn.disabled = true; }
+  toast("Indexing your notes for memory...");
+  try { const d = await request("rag.ingest", { paths: selection.size ? [...selection] : undefined }); if (btn) btn.textContent = `indexed ${d.ingested} ✓`; toast(`Indexed ${d.ingested} notes (${d.chunks} chunks) for memory`); }
+  catch (e) { if (btn) btn.textContent = "index failed"; toast(e.message, "bad"); }
+  finally { if (btn) { btn.disabled = false; setTimeout(() => (btn.textContent = "Index for memory"), 2500); } }
 }
-$("btn-ingest").onclick = ingest;
+if ($("btn-ingest")) $("btn-ingest").onclick = ingest;
 on("chat.token", (m) => { if (curAssistantEl) { curAssistantEl._raw += m.text; curAssistantEl.querySelector(".body").innerHTML = renderMarkdown(curAssistantEl._raw); messages.scrollTop = messages.scrollHeight; } });
 on("chat.warn", (m) => toast(m.message, "warn"));
 function addMsg(role, text) {
@@ -485,21 +537,25 @@ let palSel = 0, palItems = [];
 function commands() {
   return [
     { ico: "✎", label: "New note", hint: "", run: newNote },
-    { ico: "◰", label: "Go to Vault", run: () => switchPane("vault") },
-    { ico: "◓", label: "Go to Graph + Train", run: () => switchPane("graph") },
+    { ico: "◰", label: "Go to Notes", run: () => switchPane("vault") },
+    { ico: "◓", label: "Go to Graph", run: () => switchPane("graph") },
     { ico: "✉", label: "Go to Chat", run: () => switchPane("chat") },
     { ico: "⤓", label: "Models: download / manage", run: () => switchPane("models") },
-    { ico: "➕", label: "Create a new vault folder", run: createVaultFlow },
+    { ico: "📁", label: "Switch vault", run: () => openSettings("vault") },
+    { ico: "📂", label: "Open a folder as a vault", run: openVaultFlow },
+    { ico: "➕", label: "Create a new vault", run: createVaultFlow },
     { ico: "📥", label: "Import ChatGPT / Claude conversations", run: importCloudFlow },
+    { ico: "⚙", label: "Open settings", run: () => openSettings() },
     { ico: "📡", label: "Share this machine's GPU (remote inference)", run: shareGpu },
     { ico: "⚡", label: "Connect to a remote machine", run: connectRemote },
     { ico: "◑", label: "Cycle theme (dark / light / QVAC)", run: cycleTheme },
-    { ico: "◉", label: "Build knowledge graph", run: () => { switchPane("graph"); $("btn-graph-build").click(); } },
+    { ico: "◉", label: "Rebuild knowledge graph", run: () => { switchPane("graph"); $("btn-graph-build").click(); } },
     { ico: "✨", label: "Add semantic links", run: () => { switchPane("graph"); $("btn-graph-embed").click(); } },
-    { ico: "⦿", label: "Auto-select relevant docs", run: () => { switchPane("graph"); autoSelect(); } },
-    { ico: "▶", label: "Start training", run: () => { switchPane("graph"); trainBtn.click(); } },
-    { ico: "🧠", label: "Index vault for memory", run: ingest },
-    { ico: "✨", label: "Highlight notes by query...", run: () => { switchPane("graph"); setTimeout(() => $("hl-input").focus(), 50); } },
+    { ico: "🔎", label: "Search your notes (graph)", run: () => { switchPane("graph"); setTimeout(() => $("hl-input").focus(), 50); } },
+    { ico: "🧬", label: "Train your voice", run: openTrainDrawer },
+    { ico: "⦿", label: "Auto-select relevant notes", run: () => { openTrainDrawer(); autoSelect(); } },
+    { ico: "▶", label: "Start training", run: () => { openTrainDrawer(); trainBtn.click(); } },
+    { ico: "🧠", label: "Index vault for memory", run: () => { switchPane("chat"); ingest(); } },
     { ico: "⎙", label: "Share card (your model stats)", run: shareCard },
     { ico: "✦", label: "Show welcome tour", run: () => startOnboarding(true) },
   ];
@@ -534,51 +590,227 @@ paletteInput.addEventListener("keydown", (e) => {
 palette.addEventListener("click", (e) => { if (e.target === palette) closePalette(); });
 $("btn-palette").onclick = () => openPalette();
 
-// ============================================================ settings menu
-const settingsMenu = $("settings-menu");
-$("btn-settings").onclick = (e) => { e.stopPropagation(); settingsMenu.classList.toggle("show"); };
-document.addEventListener("click", (e) => { if (!settingsMenu.contains(e.target) && e.target !== $("btn-settings")) settingsMenu.classList.remove("show"); });
-$("set-theme").onclick = (e) => { if (!e.target.classList.contains("theme-dot")) cycleTheme(); };
-$("set-vault").onclick = changeVault;
-$("set-newvault").onclick = createVaultFlow;
-$("set-import").onclick = importCloudFlow;
-$("set-onboard").onclick = () => { settingsMenu.classList.remove("show"); startOnboarding(true); };
-$("set-ingest").onclick = () => { settingsMenu.classList.remove("show"); ingest(); };
-async function createVaultFlow() {
-  settingsMenu.classList.remove("show");
+// ============================================================ sidebar: expand / collapse
+const rail = $("rail");
+if (localStorage.getItem("ss-rail") === "expanded") rail.classList.add("expanded");
+$("rail-toggle").onclick = () => { const on = !rail.classList.contains("expanded"); rail.classList.toggle("expanded", on); localStorage.setItem("ss-rail", on ? "expanded" : "collapsed"); };
+
+// ============================================================ current vault + switcher
+let vaultInfo = null;
+async function updateVaultChip() {
+  try { vaultInfo = await request("vault.info"); } catch { return; }
+  $("vault-name").textContent = vaultInfo.name || "vault";
+  $("vault-chip").title = "Vault: " + vaultInfo.root + "  (click to switch)";
+  $("demo-banner").style.display = vaultInfo.isDemo ? "flex" : "none";
+}
+function sameVault(a, b) { return a && b && a.replace(/\/+$/, "") === b.replace(/\/+$/, ""); }
+function resetVaultState() {
+  clearTimeout(autosaveTimer); // don't let a pending autosave write the old note into the new vault
+  graphData = null; current = null; selection = new Set(); dirty = false; history = [];
+  editor.value = ""; preview.innerHTML = ""; noteTitle.textContent = "No note open";
+  setEditMode(false); syncSelection();
+}
+
+const vaultPop = $("vault-pop");
+$("vault-chip").onclick = async (e) => {
+  e.stopPropagation();
+  if (vaultPop.classList.contains("show")) { vaultPop.classList.remove("show"); return; }
+  await renderVaultList($("vault-pop-list"));
+  const r = $("vault-chip").getBoundingClientRect();
+  vaultPop.style.left = Math.min(r.right + 8, innerWidth - 296) + "px";
+  vaultPop.style.top = Math.min(r.top, innerHeight - 240) + "px";
+  vaultPop.classList.add("show");
+};
+document.addEventListener("click", (e) => { if (!vaultPop.contains(e.target) && !$("vault-chip").contains(e.target)) vaultPop.classList.remove("show"); });
+$("pop-open").onclick = () => { vaultPop.classList.remove("show"); openVaultFlow(); };
+$("pop-create").onclick = () => { vaultPop.classList.remove("show"); createVaultFlow(); };
+
+async function renderVaultList(el) {
+  let d; try { d = await request("vault.vaults"); } catch { return; }
+  el.innerHTML = d.vaults.map((v) => {
+    const cur = sameVault(v.path, d.current);
+    return `<div class="vault-item${cur ? " current" : ""}" data-path="${escapeHtml(v.path)}">
+      <div class="vi-main"><div class="vi-name">${escapeHtml(v.name)}</div><div class="vi-path">${escapeHtml(v.path)}</div></div>
+      ${cur ? '<span class="vi-badge">current</span>' : `<button class="vi-remove" data-rm="${escapeHtml(v.path)}" title="Forget this vault (does not delete files)">&times;</button>`}
+    </div>`;
+  }).join("") || `<div style="color:var(--mut);font-size:12px;padding:8px">no vaults yet</div>`;
+  el.querySelectorAll(".vault-item").forEach((it) => it.onclick = (ev) => { if (ev.target.dataset.rm) return; switchVault(it.dataset.path); });
+  el.querySelectorAll(".vi-remove").forEach((b) => b.onclick = async (ev) => { ev.stopPropagation(); try { await request("vault.removeVault", { path: b.dataset.rm }); } catch { /* */ } renderVaultList(el); });
+}
+// choosing/creating/importing a vault always means "work on THIS device" -> leave the master first
+async function leaveMasterIfConnected() {
+  try { const m = await request("master.status"); if (m.connected) { await request("master.disconnect"); updateRemoteIndicator(); } } catch { /* */ }
+}
+async function switchVault(path) {
+  vaultPop.classList.remove("show");
+  if (vaultInfo && sameVault(path, vaultInfo.root)) return;
   if (!await confirmDiscard()) return;
-  const dir = prompt("New vault folder (absolute path), e.g. /Users/you/my-vault:");
+  await leaveMasterIfConnected();
+  try { await request("vault.switchVault", { path }); resetVaultState(); await loadFiles(); await updateVaultChip(); toast("Switched vault"); }
+  catch (e) { toast(e.message, "bad"); }
+}
+
+// ============================================================ folder / file picker
+const picker = $("picker");
+let pickerState = { resolve: null, mode: "folder", ext: null, path: null, parent: null, home: null };
+async function browse(target) {
+  let d; try { d = await request("fs.browse", { path: target, files: pickerState.mode === "file", ext: pickerState.ext }); }
+  catch (e) { toast(e.message, "bad"); return; }
+  pickerState.path = d.path; pickerState.parent = d.parent; pickerState.home = d.home;
+  $("picker-path").textContent = d.path;
+  const list = $("picker-list"); list.innerHTML = "";
+  for (const dir of d.dirs) {
+    const el = document.createElement("div"); el.className = "picker-entry";
+    el.innerHTML = `<span class="pe-ico">&#128193;</span><span>${escapeHtml(dir.name)}</span>${dir.notes ? `<span class="pe-count">${dir.notes} notes</span>` : ""}`;
+    el.onclick = () => browse(dir.path);
+    list.appendChild(el);
+  }
+  if (pickerState.mode === "file") for (const f of d.files) {
+    const el = document.createElement("div"); el.className = "picker-entry";
+    el.innerHTML = `<span class="pe-ico">&#128196;</span><span>${escapeHtml(f.name)}</span>`;
+    el.onclick = () => finishPick(f.path);
+    list.appendChild(el);
+  }
+  if (!list.children.length) list.innerHTML = `<div class="empty" style="padding:24px">nothing here</div>`;
+}
+function pickPath({ title, mode = "folder", ext = null }) {
+  if (pickerState.resolve) { const prev = pickerState.resolve; pickerState.resolve = null; prev(null); } // resolve a leftover picker
+  return new Promise((resolve) => {
+    pickerState = { resolve, mode, ext, path: null, parent: null, home: null };
+    $("picker-title").textContent = title;
+    $("picker-use").style.display = mode === "folder" ? "" : "none";
+    $("picker-newfolder").style.display = mode === "folder" ? "" : "none";
+    picker.classList.add("show");
+    browse(null);
+  });
+}
+function finishPick(val) { picker.classList.remove("show"); const r = pickerState.resolve; pickerState.resolve = null; if (r) r(val); }
+$("picker-cancel").onclick = () => finishPick(null);
+$("picker-up").onclick = () => { if (pickerState.parent) browse(pickerState.parent); };
+$("picker-home").onclick = () => browse(pickerState.home);
+$("picker-use").onclick = () => finishPick(pickerState.path);
+$("picker-newfolder").onclick = async () => {
+  const name = prompt("New folder name:"); if (!name) return;
+  try { const r = await request("fs.mkdir", { path: pickerState.path, name }); browse(r.path); } catch (e) { toast(e.message, "bad"); }
+};
+picker.addEventListener("click", (e) => { if (e.target === picker) finishPick(null); });
+
+async function openVaultFlow() {
+  if (!await confirmDiscard()) return;
+  const dir = await pickPath({ title: "Open a folder as your vault", mode: "folder" });
   if (!dir) return;
-  try {
-    await request("vault.createVault", { path: dir });
-    graphData = null; current = null; selection = new Set(); editor.value = ""; preview.innerHTML = ""; noteTitle.textContent = "No note open";
-    await loadFiles(); toast("New vault created at " + dir);
-  } catch (e) { toast(e.message, "bad"); }
+  await leaveMasterIfConnected();
+  try { await request("vault.switchVault", { path: dir }); resetVaultState(); await loadFiles(); await updateVaultChip(); toast("Vault: " + dir); }
+  catch (e) { toast(e.message, "bad"); }
+}
+async function createVaultFlow() {
+  if (!await confirmDiscard()) return;
+  const parent = await pickPath({ title: "Choose where to create the new vault", mode: "folder" });
+  if (!parent) return;
+  const name = prompt("Name your new vault folder:", "my-vault"); if (!name) return;
+  const full = parent.replace(/\/+$/, "") + "/" + name;
+  await leaveMasterIfConnected();
+  try { await request("vault.createVault", { path: full, name }); resetVaultState(); await loadFiles(); await updateVaultChip(); toast("New vault created at " + full); }
+  catch (e) { toast(e.message, "bad"); }
 }
 async function importCloudFlow() {
-  settingsMenu.classList.remove("show");
-  const p = prompt("Path to your ChatGPT or Claude export file (conversations.json):");
+  const p = await pickPath({ title: "Select your ChatGPT or Claude export (a .json file)", mode: "file", ext: ".json" });
   if (!p) return;
+  await leaveMasterIfConnected();
   toast("Importing conversations...");
   try { const r = await request("import.cloud", { path: p }); toast(`Imported ${r.written} ${r.source} conversations into ${r.folder}`); await loadFiles(); }
   catch (e) { toast("Import failed: " + e.message, "bad"); }
 }
-// ---- remote / delegated inference ----
+$("btn-demo-create").onclick = createVaultFlow;
+
+// ============================================================ settings modal (tabbed)
+const settings = $("settings");
+function openSettings(tab) { settings.classList.add("show"); if (tab) setSettingsTab(tab); else if (settings.querySelector(".stab.active")) setSettingsTab(settings.querySelector(".stab.active").dataset.tab); }
+function closeSettings() { settings.classList.remove("show"); }
+function setSettingsTab(tab) {
+  settings.querySelectorAll(".stab").forEach((t) => t.classList.toggle("active", t.dataset.tab === tab));
+  settings.querySelectorAll(".spane").forEach((p) => p.classList.toggle("active", p.dataset.tab === tab));
+  if (tab === "vault") renderVaultList($("set-vault-list"));
+  if (tab === "devices") refreshDevicesStatus();
+}
+$("btn-settings").onclick = () => openSettings();
+$("settings-close").onclick = closeSettings;
+settings.addEventListener("click", (e) => { if (e.target === settings) closeSettings(); });
+settings.querySelectorAll(".stab").forEach((t) => t.onclick = () => setSettingsTab(t.dataset.tab));
+$("set-onboard").onclick = () => { closeSettings(); startOnboarding(true); };
+$("set-ingest").onclick = () => { closeSettings(); switchPane("chat"); ingest(); };
+$("set-open").onclick = () => { closeSettings(); openVaultFlow(); };
+$("set-newvault").onclick = () => { closeSettings(); createVaultFlow(); };
+$("set-import").onclick = () => { closeSettings(); importCloudFlow(); };
 $("set-share").onclick = shareGpu;
 $("set-remote").onclick = connectRemote;
-$("remote-state").onclick = async () => { if (!confirm("Disconnect from the remote machine? Chat goes back to local.")) return; try { await request("remote.disconnect"); updateRemoteIndicator(); toast("Disconnected. Running locally."); } catch (e) { toast(e.message, "bad"); } };
+
+// ---- remote / delegated inference ----
+async function refreshDevicesStatus() {
+  try {
+    const [r, m] = await Promise.all([request("remote.status"), request("master.status")]);
+    let txt;
+    if (m.connected) txt = "⚡ Connected to a master machine - you're working on its vault.";
+    else if (m.master) txt = "🖥️ This machine is a MASTER (its vault + model are shared). Pairing code is active.";
+    else if (r.remote) txt = "⚡ Borrowing a remote GPU for chat.";
+    else if (r.provider) txt = "📡 Sharing this machine's GPU.";
+    else txt = "Not connected. Everything runs on this machine.";
+    $("devices-status").textContent = txt;
+  } catch { /* */ }
+}
+// ---- master machine (Path 2): this box holds the vault + model; satellites are thin clients ----
+$("set-master-start").onclick = becomeMaster;
+$("set-master-connect").onclick = connectToMaster;
+async function becomeMaster() {
+  toast("Starting the master link (a few seconds)...");
+  try {
+    const d = await request("master.start");
+    prompt("This machine is now a MASTER: it holds the vault and runs the model. Paste this pairing code into your other device (Settings -> Devices -> Connect to a master machine). Keep this app running:", d.publicKey);
+    refreshDevicesStatus(); updateRemoteIndicator();
+  } catch (e) { toast("Could not become master: " + e.message, "bad"); }
+}
+async function connectToMaster() {
+  closeSettings();
+  const pk = prompt("Paste the master machine's pairing code (the 64-hex public key from its 'Become master'):");
+  if (!pk) return;
+  if (!await confirmDiscard()) return;
+  toast("Connecting to the master machine...");
+  try {
+    await request("master.connect", { publicKey: pk.trim() });
+    resetVaultState(); await loadFiles(); await updateVaultChip(); refreshDevicesStatus(); updateRemoteIndicator();
+    request("graph.build").then((g) => { graphData = g; if (current) renderBacklinks(current); }).catch(() => {});
+    toast("Connected. You're now working on the master's vault, on its GPU.");
+  } catch (e) { toast("Connect failed: " + e.message, "bad"); }
+}
+on("remote.lost", () => {
+  for (const [, p] of pending) { try { p.reject(new Error("connection to the master was lost")); } catch { /* */ } }
+  pending.clear(); // clear hung spinners for forwarded requests that will never get a reply
+  toast("Lost the connection to the master machine. Back to this device.", "bad");
+  request("master.disconnect").catch(() => {}); resetVaultState(); loadFiles().catch(() => {}); updateVaultChip(); updateRemoteIndicator();
+});
+$("remote-state").onclick = async () => {
+  let m = {}; try { m = await request("master.status"); } catch { /* */ }
+  if (m.connected) {
+    if (!confirm("Disconnect from the master machine? You'll go back to this device's own vault.")) return;
+    try { await request("master.disconnect"); resetVaultState(); await loadFiles(); await updateVaultChip(); updateRemoteIndicator(); toast("Disconnected. Back on this machine."); }
+    catch (e) { toast(e.message, "bad"); }
+    return;
+  }
+  if (!confirm("Disconnect from the remote machine? Chat goes back to local.")) return;
+  try { await request("remote.disconnect"); updateRemoteIndicator(); toast("Disconnected. Running locally."); } catch (e) { toast(e.message, "bad"); }
+};
 async function shareGpu() {
-  settingsMenu.classList.remove("show");
+  closeSettings();
   toast("Starting provider (this may take a few seconds)...");
   try {
     const d = await request("provider.start");
-    prompt("This machine is now sharing its GPU. Paste this pairing code into your other device (Settings -> Connect to a remote machine). Keep this app running to keep serving:", d.publicKey);
+    prompt("This machine is now sharing its GPU. Paste this pairing code into your other device (Settings -> Devices -> Connect). Keep this app running to keep serving:", d.publicKey);
     updateRemoteIndicator();
   } catch (e) { toast("Could not start provider: " + e.message, "bad"); }
 }
 async function connectRemote() {
-  settingsMenu.classList.remove("show");
-  const pk = prompt("Paste the remote machine's pairing code (64-hex public key from its 'Share this machine's GPU'):");
+  closeSettings();
+  const pk = prompt("Paste the remote machine's pairing code (the 64-hex public key from its 'Share GPU'):");
   if (!pk) return;
   toast("Connecting to the remote machine...");
   try { await request("remote.connect", { providerPublicKey: pk.trim(), baseKey: chatBase.value }); updateRemoteIndicator(); toast("Connected. Chat + agent now run on the remote machine; your vault stays here."); }
@@ -586,29 +818,22 @@ async function connectRemote() {
 }
 async function updateRemoteIndicator() {
   try {
-    const s = await request("remote.status");
+    const [s, m] = await Promise.all([request("remote.status"), request("master.status")]);
     const el = $("remote-state");
-    if (s.remote) el.innerHTML = `<span style="color:var(--accent)">&#9889; running on remote</span>`;
+    if (m.connected) el.innerHTML = `<span style="color:var(--accent)">&#9889; on master machine</span>`;
+    else if (m.master) el.innerHTML = `<span style="color:var(--accent2)">&#128421; master (vault shared)</span>`;
+    else if (s.remote) el.innerHTML = `<span style="color:var(--accent)">&#9889; running on remote</span>`;
     else if (s.provider) el.innerHTML = `<span style="color:var(--accent2)">&#128225; sharing GPU</span>`;
     else el.innerHTML = "";
   } catch { /* */ }
-}
-async function changeVault() {
-  settingsMenu.classList.remove("show");
-  if (!await confirmDiscard()) return;
-  const info = await request("vault.info");
-  const root = prompt("Vault folder (absolute path):", info.root);
-  if (!root || root === info.root) return;
-  try { await request("vault.setRoot", { path: root }); graphData = null; current = null; selection = new Set(); editor.value = ""; preview.innerHTML = ""; noteTitle.textContent = "No note open"; await loadFiles(); toast("Vault: " + root); }
-  catch (e) { toast(e.message, "bad"); }
 }
 
 // ============================================================ onboarding
 const STEPS = [
   { art: "🔒", h: 'Welcome to <span class="accent">Second Self</span>', p: "An open-source second brain that learns to talk like you, and knows what you know. Your notes, your model, your machine. Nothing is ever uploaded.", cta: "Start" },
-  { art: "🗂️", h: "1. Your <span class=\"accent\">vault</span>", p: "Write and link markdown notes like Obsidian. Press + to create one, [[wikilink]] to connect them. The demo opens on a sample vault you can replace anytime in Settings.", cta: "Next" },
-  { art: "🕸️", h: "2. See your <span class=\"accent\">knowledge graph</span>", p: 'Every note becomes a node. The app draws semantic links between related notes on-device, then auto-picks the docs worth training on. Try "highlight all docs of the recipe".', cta: "Next" },
-  { art: "🧬", h: "3. Train a model on <span class=\"accent\">you</span>", p: "One click fine-tunes a small LoRA on your selected notes. It runs entirely on your GPU. The result is a model that writes in your voice.", cta: "Next" },
+  { art: "🗂️", h: "1. Your <span class=\"accent\">vault</span>", p: "A vault is just a folder of your notes. Write them in markdown and connect them with <code>[[wiki-links]]</code>. You're starting on a small <b>demo vault</b> so you can explore right away. Create your own from Settings whenever you're ready.", cta: "Next" },
+  { art: "🕸️", h: "2. See your <span class=\"accent\">knowledge graph</span>", p: 'Every note becomes a dot; related notes link up automatically, on-device. Search your notes in plain language (e.g. "notes about travel") and the matches light up.', cta: "Next" },
+  { art: "🧬", h: "3. Train a model on <span class=\"accent\">you</span>", p: "In the <b>Chat &amp; Train</b> tab, click <b>Train your voice</b>. One click fine-tunes a small model on your selected notes, entirely on your GPU. The result writes in your voice.", cta: "Next" },
   { art: "💬", h: "4. Chat with your <span class=\"accent\">second self</span>", p: "Toggle Voice (your LoRA) and Memory (retrieval over your notes) to feel the difference between a generic model and one that is you. Press Cmd+K anytime for commands.", cta: "Let's go" },
 ];
 let onboardStep = 0;
@@ -643,7 +868,14 @@ document.addEventListener("keydown", (e) => {
   const mod = e.metaKey || e.ctrlKey;
   if (mod && e.key.toLowerCase() === "k") { e.preventDefault(); palette.classList.contains("show") ? closePalette() : openPalette(); }
   else if (mod && e.key.toLowerCase() === "o") { e.preventDefault(); openPalette(true); }
-  else if (e.key === "Escape") { closePalette(); hoverCard.style.display = "none"; settingsMenu.classList.remove("show"); if ($("onboard").classList.contains("show")) endOnboarding(); }
+  else if (e.key === "Escape") {
+    closePalette(); hoverCard.style.display = "none";
+    if (settings.classList.contains("show")) closeSettings();
+    if (picker.classList.contains("show")) finishPick(null);
+    vaultPop.classList.remove("show");
+    closeTrainDrawer();
+    if ($("onboard").classList.contains("show")) endOnboarding();
+  }
   else if (mod && e.key === "1") { e.preventDefault(); switchPane("vault"); }
   else if (mod && e.key === "2") { e.preventDefault(); switchPane("graph"); }
   else if (mod && e.key === "3") { e.preventDefault(); switchPane("chat"); }
@@ -674,7 +906,7 @@ $("brand").onclick = () => { brandClicks++; clearTimeout(brandTimer); brandTimer
 (async () => {
   const connected = await new Promise((r) => { let n = 0; const t = setInterval(() => { if (ws && ws.readyState === 1) { clearInterval(t); r(true); } else if (++n > 160) { clearInterval(t); r(false); } }, 50); });
   if (!connected) { toast("Can't reach the local server. Is `npm start` running?", "bad"); statusLine.textContent = "offline"; return; }
-  await loadFiles(); refreshAdapters(); updateRemoteIndicator();
+  await loadFiles(); refreshAdapters(); updateRemoteIndicator(); updateVaultChip(); loadRetrainCfg();
   // background build for backlinks; guard so it never clobbers a graph the user
   // already built+embedded while this was in flight (would silently drop embed edges).
   request("graph.build").then((g) => { if (!graphData) { graphData = g; if (current) renderBacklinks(current); } }).catch(() => {});

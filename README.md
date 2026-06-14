@@ -2,7 +2,7 @@
 
 **An open-source second brain that learns to talk like you, and knows what you know. Your notes, your model, your machine. Nothing is ever uploaded.**
 
-Second Self is a local, Obsidian-style notes vault that can also train a small AI model on you. Write and link your notes, watch the app draw a semantic graph of how they connect, let it pick the notes worth learning from, and fine-tune a LoRA adapter that writes in your voice. Then chat with it: a **Voice** toggle loads your adapter, a **Memory** toggle retrieves from your notes. Ingestion, training, and inference all run on your hardware through the [QVAC SDK](https://github.com/tetherto/qvac). The only network call in the whole app is the first-run model download.
+Second Self is a local, private notes vault that can also train a small AI model on you. Write and link your notes, watch the app draw a semantic graph of how they connect, let it pick the notes worth learning from, and fine-tune a LoRA adapter that writes in your voice. Then chat with it: a **Voice** toggle loads your adapter, a **Memory** toggle retrieves from your notes. Ingestion, training, and inference all run on your hardware through the [QVAC SDK](https://github.com/tetherto/qvac). The only network call in the whole app is the first-run model download.
 
 > Think of it as an open, self-hosted Apple Intelligence: your context, your model, your hardware.
 

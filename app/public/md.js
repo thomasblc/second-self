@@ -1,6 +1,6 @@
 // Compact markdown renderer (no dependency, fully offline). Handles the subset a
 // notes vault needs: headings, bold/italic, inline + fenced code, links, [[wikilinks]],
-// lists, task checkboxes, blockquotes, Obsidian-style callouts, tables, hr, paragraphs.
+// lists, task checkboxes, blockquotes, wiki-style callouts, tables, hr, paragraphs.
 // HTML is escaped first (quotes too), so note content cannot break out of attributes.
 const CALLOUT_ICONS = {
   note: "🗒️", info: "ℹ️", tip: "💡", important: "❗", warning: "⚠️",

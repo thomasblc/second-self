@@ -1,5 +1,5 @@
 // Vault file layer for Second Self.
-// A "vault" is a folder of markdown files (Obsidian-style). Everything here is
+// A "vault" is a folder of markdown files. Everything here is
 // local file I/O, sandboxed to the vault root: no path may escape it (security).
 // The agent never reads message content for display; this module reads files the
 // USER points the app at, on the user's own machine. Nothing leaves the device.

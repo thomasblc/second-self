@@ -9,14 +9,25 @@
 <body>
 <div id="app">
   <nav id="rail">
-    <div class="brand" id="brand" title="Second Self">SECOND SELF</div>
-    <button class="rail-btn active" data-pane="vault" title="Vault (notes)" aria-label="Vault" aria-current="page">&#9776;</button>
-    <button class="rail-btn" data-pane="graph" title="Graph + Train" aria-label="Graph and Train">&#9683;</button>
-    <button class="rail-btn" data-pane="chat" title="Chat" aria-label="Chat">&#9993;</button>
-    <button class="rail-btn" data-pane="models" title="Models" aria-label="Models">&#10515;</button>
-    <button class="rail-btn" id="btn-palette" title="Command palette (Cmd/Ctrl+K)" aria-label="Command palette">&#9000;</button>
+    <div class="rail-top">
+      <button class="rail-btn rail-toggle" id="rail-toggle" title="Expand / collapse the sidebar" aria-label="Toggle sidebar"><span class="ico">&#9776;</span><span class="lbl brand" id="brand">Second Self</span></button>
+    </div>
+
+    <button class="vault-chip" id="vault-chip" title="Switch vault" aria-label="Current vault, click to switch">
+      <span class="ico">&#128193;</span>
+      <span class="vc-text"><span class="vc-label">Vault</span><span class="vc-name" id="vault-name">...</span></span>
+      <span class="vc-caret">&#9662;</span>
+    </button>
+
+    <button class="rail-btn active" data-pane="vault" title="Notes" aria-label="Notes" aria-current="page"><span class="ico">&#128221;</span><span class="lbl">Notes</span></button>
+    <button class="rail-btn" data-pane="graph" title="Graph" aria-label="Knowledge graph"><span class="ico">&#128376;</span><span class="lbl">Graph</span></button>
+    <button class="rail-btn" data-pane="chat" title="Chat & Train" aria-label="Chat and train"><span class="ico">&#128172;</span><span class="lbl">Chat &amp; Train</span></button>
+    <button class="rail-btn" data-pane="models" title="Models" aria-label="Models"><span class="ico">&#128230;</span><span class="lbl">Models</span></button>
+
     <div class="rail-spacer"></div>
-    <button class="rail-btn" id="btn-settings" title="Settings" aria-label="Settings">&#9881;</button>
+
+    <button class="rail-btn" id="btn-palette" title="Command palette (Cmd/Ctrl+K)" aria-label="Command palette"><span class="ico">&#9000;</span><span class="lbl">Commands</span></button>
+    <button class="rail-btn" id="btn-settings" title="Settings" aria-label="Settings"><span class="ico">&#9881;</span><span class="lbl">Settings</span></button>
   </nav>
 
   <div id="main">
@@ -27,87 +38,116 @@
           <input id="search" placeholder="Search notes...  (Cmd+O to jump)" aria-label="Search notes">
           <button class="btn" id="btn-new" title="New note" aria-label="New note">+</button>
         </div>
+        <div id="demo-banner" class="demo-banner" style="display:none">
+          <span>You're exploring a <b>demo vault</b>.</span>
+          <button class="btn primary" id="btn-demo-create">Create your own</button>
+        </div>
         <div id="file-list"></div>
       </div>
-      <div id="editor-wrap">
+      <div id="editor-wrap" class="mode-read">
         <div class="editor-bar">
           <span class="title" id="note-title">No note open</span>
           <span id="save-state" class="metric" style="color:var(--mut);font-size:11px"></span>
-          <button class="btn" id="btn-save">Save</button>
-          <button class="btn danger" id="btn-del">Delete</button>
+          <button class="btn" id="btn-edit-toggle" title="Edit this note (E)" aria-label="Toggle edit mode">&#9998; Edit</button>
+          <button class="btn" id="btn-save" title="Save (Cmd+S)">Save</button>
+          <button class="btn danger" id="btn-del" title="Delete note">Delete</button>
         </div>
         <div class="editor-split">
-          <textarea id="editor" spellcheck="false" placeholder="Open a note from the left, or press + to create one. Markdown, [[wikilinks]], > [!tip] callouts, and tables all render live."></textarea>
+          <textarea id="editor" spellcheck="false" placeholder="Open a note from the left, or press + to create one. Markdown, [[wiki-links]], > [!tip] callouts, and tables all render live."></textarea>
           <div id="preview"></div>
         </div>
         <div id="backlinks"></div>
       </div>
     </section>
 
-    <!-- GRAPH + TRAIN -->
+    <!-- GRAPH (pure visualization + search) -->
     <section class="pane" id="graph-pane">
       <div id="graph-left">
-        <canvas id="graph-canvas" role="img" aria-label="Knowledge graph of your notes. Use the command palette or Auto-select for keyboard access."></canvas>
+        <canvas id="graph-canvas" role="img" aria-label="Knowledge graph of your notes. Use the search box or the command palette for keyboard access."></canvas>
         <div id="graph-overlay">
-          <span id="hl-box"><span class="magic">&#10024;</span><input id="hl-input" placeholder="highlight notes about... (e.g. travel)" aria-label="Highlight notes by natural-language query"><button class="btn" id="btn-hl-clear" title="clear highlight" aria-label="Clear highlight" style="display:none">&times;</button></span>
-          <button class="btn" id="btn-graph-build">Build</button>
-          <button class="btn" id="btn-graph-embed">+ semantic links</button>
+          <span id="hl-box">
+            <span class="magic">&#128269;</span>
+            <input id="hl-input" placeholder="Search your notes in plain language, e.g. travel ideas" aria-label="Search notes by natural-language query">
+            <button class="btn" id="btn-hl-clear" title="clear search" aria-label="Clear search" style="display:none">&times;</button>
+          </span>
+          <button class="btn" id="btn-graph-build" title="Rebuild the graph from links and tags">Rebuild</button>
+          <button class="btn" id="btn-graph-embed" title="Add semantic links by embedding every note on-device">+ semantic links</button>
           <span class="pill" id="graph-stats">no graph yet</span>
+          <span class="pill sel-pill" id="graph-sel-pill" title="These notes will be used to train your voice. Open Chat &amp; Train to start." style="display:none"></span>
         </div>
         <div class="legend">
-          <span class="lg-link">link</span><span class="lg-tag">tag</span><span class="lg-embed">semantic</span><span class="lg-hi">highlighted</span>
-          <span style="border-left:1px solid var(--line);padding-left:10px">&#9711; selected = will train</span>
+          <span class="lg-link">link</span><span class="lg-tag">tag</span><span class="lg-embed">semantic</span><span class="lg-hi">match</span>
+          <span style="border-left:1px solid var(--line);padding-left:10px">&#9711; selected = trains your voice (shift-click)</span>
         </div>
       </div>
-      <aside id="train-panel">
-        <div class="panel-sec">
-          <h3>1. Pick what trains "you"</h3>
-          <div class="row"><button class="btn primary" id="btn-autoselect">Auto-select relevant docs</button></div>
-          <div class="row"><span id="select-info" style="color:var(--mut);font-size:12px">The app embeds every note and picks the ones most central to your themes. Shift-click nodes to adjust.</span></div>
-          <div class="row">selected: <span class="sel-count" id="sel-count">0</span> docs <button class="btn" id="btn-sel-clear" style="margin-left:auto">clear</button></div>
-        </div>
-        <div class="panel-sec">
-          <h3>2. Train a LoRA on you</h3>
-          <div class="row">base
-            <select id="base-pick">
-              <option value="1.7b">Qwen3 1.7B (recommended, proven, ~2h)</option>
-              <option value="3b">BitNet b1.58 3B (largest, non-medical, ~2-4h)</option>
-              <option value="600m">Qwen3 0.6B (fast, weaker)</option>
-            </select>
-          </div>
-          <div class="row">epochs <input class="num" id="epochs" type="number" value="1" min="1" max="4" style="width:54px">
-            ctx <input class="num" id="ctx" type="number" value="256" min="128" max="1024" step="128" style="width:64px"></div>
-          <div class="row"><button class="btn primary" id="btn-train">Start training</button><button class="btn danger" id="btn-train-stop" disabled>Stop</button></div>
-          <div class="bar"><div id="train-bar"></div></div>
-          <div class="row metric" id="train-metrics" style="font-size:11px;color:var(--mut)">idle</div>
-          <div class="loss-log" id="train-log"></div>
-        </div>
-        <div class="panel-sec">
-          <h3>3. Your adapters</h3>
-          <div id="adapter-list" style="font-size:12px;color:var(--mut)">none yet</div>
-        </div>
-      </aside>
     </section>
 
-    <!-- CHAT -->
+    <!-- CHAT & TRAIN -->
     <section class="pane" id="chat-pane">
       <div class="chat-bar">
-        <label class="toggle">model
+        <label class="toggle" title="Which base model answers">model
           <select id="chat-base"><option value="1.7b">Qwen3 1.7B</option><option value="1b">Llama 1B</option><option value="8b">Qwen3 8B</option><option value="600m">Qwen3 0.6B</option></select>
         </label>
-        <label class="toggle"><input type="checkbox" id="tg-voice"> Voice (your LoRA)</label>
+        <label class="toggle" title="Reply in your writing voice, using a LoRA trained on your notes"><input type="checkbox" id="tg-voice"> Voice (your LoRA)</label>
         <select id="chat-adapter" class="num" style="display:none"></select>
-        <label class="toggle"><input type="checkbox" id="tg-memory"> Memory (your notes)</label>
+        <label class="toggle" title="Ground answers in facts retrieved from your notes"><input type="checkbox" id="tg-memory"> Memory (your notes)</label>
         <label class="toggle" title="Let the model use tools to find, read (and optionally edit) your notes"><input type="checkbox" id="tg-agent"> Agent</label>
         <select id="agent-perm" class="num" style="display:none"><option value="read">read-only</option><option value="edit">read + edit</option></select>
-        <button class="btn" id="btn-ingest" title="Index the vault for retrieval">Index vault for memory</button>
+        <button class="btn" id="btn-ingest" title="Embed your notes on-device so Memory can retrieve real facts from them">Index for memory</button>
+        <button class="btn" id="btn-train-open" title="Train a model on your own notes">&#129516; Train your voice</button>
         <span id="chat-model-state" style="margin-left:auto;color:var(--mut);font-size:11px"></span>
       </div>
-      <div id="messages"><div class="empty"><div style="font-size:34px">&#128173;</div>Talk to the base model now. Train a LoRA to flip on <b>your voice</b>, index your vault to give it <b>your memory</b>. Toggle them above to feel the difference. Everything runs on this machine.</div></div>
+      <div id="messages"><div class="empty"><div style="font-size:34px">&#128172;</div>Talk to the base model now. Train a LoRA to flip on <b>your voice</b>, index your vault to give it <b>your memory</b>. Toggle them above to feel the difference. Everything runs on this machine.</div></div>
       <div class="chat-input">
         <textarea id="chat-text" placeholder="Ask anything... (Enter to send)"></textarea>
         <button class="btn primary" id="btn-send">Send</button>
       </div>
+
+      <!-- Training drawer (slides in from the right inside the Chat tab) -->
+      <aside id="train-drawer" aria-label="Train your voice">
+        <div class="drawer-head">
+          <h2>&#129516; Train your voice</h2>
+          <button class="btn" id="btn-train-close" aria-label="Close training panel">&times;</button>
+        </div>
+        <div class="drawer-scroll">
+          <p class="drawer-intro">Fine-tune a small model on the notes you select, so it writes the way you do. It runs entirely on this machine.</p>
+          <div class="panel-sec">
+            <h3>1. Pick what trains "you"</h3>
+            <div class="row"><button class="btn primary" id="btn-autoselect">Auto-select relevant notes</button></div>
+            <div class="row"><span id="select-info" style="color:var(--mut);font-size:12px">The app embeds every note and picks the ones most central to your themes. Open the Graph tab and shift-click nodes to fine-tune the set.</span></div>
+            <div class="row">selected: <span class="sel-count" id="sel-count">0</span> notes <button class="btn" id="btn-sel-clear" style="margin-left:auto">clear</button></div>
+          </div>
+          <div class="panel-sec">
+            <h3>2. Train a LoRA on you</h3>
+            <div class="row">base
+              <select id="base-pick">
+                <option value="1.7b">Qwen3 1.7B (recommended, proven, ~2h)</option>
+                <option value="3b">BitNet b1.58 3B (largest fine-tunable; slow to run in this SDK)</option>
+                <option value="600m">Qwen3 0.6B (fast, weaker)</option>
+              </select>
+            </div>
+            <div class="row">epochs <input class="num" id="epochs" type="number" value="1" min="1" max="4" style="width:54px">
+              ctx <input class="num" id="ctx" type="number" value="256" min="128" max="1024" step="128" style="width:64px"></div>
+            <div class="row"><button class="btn primary" id="btn-train">Start training</button><button class="btn danger" id="btn-train-stop" disabled>Stop</button></div>
+            <div class="bar"><div id="train-bar"></div></div>
+            <div class="row metric" id="train-metrics" style="font-size:11px;color:var(--mut)">idle</div>
+            <div class="loss-log" id="train-log"></div>
+          </div>
+          <div class="panel-sec">
+            <h3>3. Your adapters</h3>
+            <div id="adapter-list" style="font-size:12px;color:var(--mut)">none yet</div>
+          </div>
+          <div class="panel-sec">
+            <h3>4. Keep it fresh</h3>
+            <label class="toggle" style="color:var(--fg)" title="Re-train automatically on a schedule so your model keeps up with new notes"><input type="checkbox" id="tg-autoretrain"> Auto-retrain on a schedule</label>
+            <div class="row" id="autoretrain-row" style="display:none">every
+              <select id="autoretrain-interval" class="num"><option value="7">week</option><option value="14">2 weeks</option><option value="30">month</option></select>
+              <span style="color:var(--mut);font-size:11px">re-selects your notes and retrains in the background.</span>
+            </div>
+          </div>
+        </div>
+      </aside>
+      <div id="train-scrim"></div>
     </section>
 
     <!-- MODELS -->
@@ -115,7 +155,8 @@
       <div class="models-wrap">
         <div class="models-head">
           <h2>Models</h2>
-          <p>Pick the model your second self runs on. Everything downloads once into <code>~/.qvac/models</code>, is shared across the app, and stays on your machine. Open models link to their weights on Hugging Face. The recommended base to train your voice on is <b>Qwen3 4B</b>.</p>
+          <p>Pick the model your second self runs on. Everything downloads once into <code>~/.qvac/models</code>, is shared across the app, and stays on your machine. Open models link to their weights on Hugging Face.</p>
+          <p class="models-hint"><b>Fine-tunable</b> bases can learn your voice (train a LoRA on your notes). <b>Chat-only</b> models are great to talk to but cannot be trained in this SDK. The recommended base to train on is <b>Qwen3 1.7B</b> (proven), or <b>BitNet b1.58 3B</b> for the largest fine-tunable model.</p>
         </div>
         <div id="models-list"><div class="empty">loading catalog...</div></div>
       </div>
@@ -130,22 +171,127 @@
   <span id="status-line">connecting... <span class="kbd">Cmd K</span></span>
 </div>
 
-<!-- settings menu -->
-<div id="settings-menu">
-  <div class="menu-item" id="set-theme">Theme<span class="theme-dots">
-    <button class="theme-dot" data-t="dark" title="Dark" aria-label="Dark theme" style="background:#0e1116"></button>
-    <button class="theme-dot" data-t="light" title="Light" aria-label="Light theme" style="background:#f6f8fb"></button>
-    <button class="theme-dot" data-t="original" title="QVAC" aria-label="QVAC theme" style="background:#0b0f0d"></button>
-  </span></div>
-  <div class="menu-item" id="set-vault">&#128193; Change vault folder</div>
-  <div class="menu-item" id="set-share">&#128225; Share this machine's GPU (remote inference)</div>
-  <div class="menu-item" id="set-remote">&#9889; Connect to a remote machine</div>
-  <div class="menu-item" id="set-newvault">&#10133; Create a new vault folder</div>
-  <div class="menu-item" id="set-import">&#128229; Import ChatGPT / Claude chats</div>
-  <div class="menu-item" id="set-onboard">&#10024; Show welcome tour</div>
-  <div class="menu-item" id="set-ingest">&#129504; Index vault for memory</div>
-  <div class="menu-item" id="set-about" style="color:var(--mut);font-size:12px">Second Self - local AI, your data. Apache 2.0.</div>
+<!-- vault switcher popover -->
+<div id="vault-pop" class="popover">
+  <div class="pop-head">Your vaults</div>
+  <div id="vault-pop-list"></div>
+  <div class="pop-sep"></div>
+  <button class="pop-action" id="pop-open">&#128193; Open a folder as a vault...</button>
+  <button class="pop-action" id="pop-create">&#10133; Create a new vault...</button>
 </div>
+
+<!-- settings modal (tabbed) -->
+<div class="overlay" id="settings"><div class="modal" id="settings-modal">
+  <div class="modal-head">
+    <h2>Settings</h2>
+    <button class="btn" id="settings-close" aria-label="Close settings">&times;</button>
+  </div>
+  <div class="modal-body">
+    <nav class="settings-tabs" id="settings-tabs">
+      <button class="stab active" data-tab="general">General</button>
+      <button class="stab" data-tab="vault">Vault</button>
+      <button class="stab" data-tab="memory">Memory &amp; Sync</button>
+      <button class="stab" data-tab="devices">Devices</button>
+      <button class="stab" data-tab="about">About</button>
+    </nav>
+    <div class="settings-panes">
+      <!-- General -->
+      <div class="spane active" data-tab="general">
+        <div class="set-row">
+          <div class="set-info"><b>Theme</b><span>How the app looks. Original is the QVAC brand palette.</span></div>
+          <span class="theme-dots">
+            <button class="theme-dot" data-t="dark" title="Dark" aria-label="Dark theme" style="background:#0e1116"></button>
+            <button class="theme-dot" data-t="light" title="Light" aria-label="Light theme" style="background:#f6f8fb"></button>
+            <button class="theme-dot" data-t="original" title="QVAC" aria-label="QVAC theme" style="background:#0b0f0d"></button>
+          </span>
+        </div>
+        <div class="set-row">
+          <div class="set-info"><b>Welcome tour</b><span>Replay the first-run walkthrough of the app.</span></div>
+          <button class="btn" id="set-onboard">Show tour</button>
+        </div>
+      </div>
+
+      <!-- Vault -->
+      <div class="spane" data-tab="vault">
+        <div class="set-row col">
+          <div class="set-info"><b>Your vaults</b><span>A vault is a folder of markdown notes on your disk. Switch between them, or open another folder.</span></div>
+          <div id="set-vault-list" class="vault-list"></div>
+        </div>
+        <div class="set-row">
+          <div class="set-info"><b>Open a folder as a vault</b><span>Point Second Self at any folder of notes you already have.</span></div>
+          <button class="btn" id="set-open">Browse...</button>
+        </div>
+        <div class="set-row">
+          <div class="set-info"><b>Create a new vault</b><span>Make a fresh folder with a starter note and switch to it.</span></div>
+          <button class="btn primary" id="set-newvault">Create...</button>
+        </div>
+        <div class="set-row">
+          <div class="set-info"><b>Import ChatGPT / Claude chats</b><span>Turn your exported conversations into notes you can search and train on.</span></div>
+          <button class="btn" id="set-import">Import...</button>
+        </div>
+      </div>
+
+      <!-- Memory & Sync -->
+      <div class="spane" data-tab="memory">
+        <div class="set-row">
+          <div class="set-info"><b>Index vault for memory</b><span>Embeds your notes on-device so the chat's <b>Memory</b> toggle can retrieve real facts from them (RAG). Re-run after adding a lot of notes.</span></div>
+          <button class="btn" id="set-ingest">Index now</button>
+        </div>
+        <div class="set-row col">
+          <div class="set-info"><b>Vault sync</b><span>Your notes are plain <code>.md</code> files on disk. If your vault folder lives in iCloud, Dropbox, or a git repo, those tools sync it across devices, and Second Self picks up external edits automatically (no save button needed). There is no Second Self cloud: nothing is uploaded.</span></div>
+        </div>
+      </div>
+
+      <!-- Devices -->
+      <div class="spane" data-tab="devices">
+        <div class="set-row" id="devices-status" style="color:var(--fg);font-size:13px"></div>
+        <div class="set-row">
+          <div class="set-info"><b>Make this a master machine</b><span>This machine keeps the vault and runs the model. Other devices connect to it and work on <b>this</b> vault over an encrypted peer-to-peer link (works across networks, nothing goes through a server). It gives you a pairing code to share.</span></div>
+          <button class="btn primary" id="set-master-start">Become master</button>
+        </div>
+        <div class="set-row">
+          <div class="set-info"><b>Connect to a master machine</b><span>Make this device a thin client: paste a master's pairing code to browse <b>its</b> vault and run inference on it. Nothing is stored here.</span></div>
+          <button class="btn" id="set-master-connect">Connect...</button>
+        </div>
+        <div class="set-row">
+          <div class="set-info"><b>Share just this machine's GPU</b><span>Advanced: let another device borrow this machine's GPU for inference while its own files stay on it (delegated inference).</span></div>
+          <button class="btn" id="set-share">Share GPU</button>
+        </div>
+        <div class="set-row">
+          <div class="set-info"><b>Borrow a remote GPU</b><span>Advanced: run chat on another machine's GPU; your vault stays here.</span></div>
+          <button class="btn" id="set-remote">Connect...</button>
+        </div>
+      </div>
+
+      <!-- About -->
+      <div class="spane" data-tab="about">
+        <div class="set-row col">
+          <div class="set-info"><b>Second Self</b><span>A local, private notes vault that learns to talk like you. Your notes, your model, your machine. Nothing is ever uploaded.</span></div>
+          <div class="set-info"><span>Runs on the open-source <a href="https://github.com/tetherto/qvac" target="_blank" rel="noopener">QVAC SDK</a>. Licensed Apache 2.0.</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div></div>
+
+<!-- folder / file picker modal -->
+<div class="overlay" id="picker"><div class="modal picker-modal">
+  <div class="modal-head">
+    <h2 id="picker-title">Choose a folder</h2>
+    <button class="btn" id="picker-cancel" aria-label="Cancel">&times;</button>
+  </div>
+  <div class="picker-pathbar">
+    <button class="btn" id="picker-up" title="Up one level">&#8593;</button>
+    <button class="btn" id="picker-home" title="Home">&#8962;</button>
+    <span class="picker-path" id="picker-path"></span>
+  </div>
+  <div class="picker-list" id="picker-list"></div>
+  <div class="picker-foot">
+    <button class="btn" id="picker-newfolder">&#10133; New folder</button>
+    <span style="flex:1"></span>
+    <button class="btn primary" id="picker-use">Use this folder</button>
+  </div>
+</div></div>
 
 <!-- command palette -->
 <div class="overlay" id="palette"><div class="palette-box">

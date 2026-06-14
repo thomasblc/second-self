@@ -2,9 +2,9 @@
 
 **Status:** S0 = GO (voice proven at 1.7B, 2026-06-13). This is the concrete build spec, on top of the recipe template (`docs/content/recipes/23-second-self.md`).
 
-**What Second Self IS (corrected with Thomas, 2026-06-13):** a free, open-source, local **Obsidian alternative** that ALSO trains a model on you. One single app. Not a separate vault, not just a fine-tune tool.
+**What Second Self IS (corrected with Thomas, 2026-06-13):** a free, open-source, local **notes-vault app** that ALSO trains a model on you. One single app. Not a separate vault, not just a fine-tune tool.
 
-1. **A real note-taking vault** (the Obsidian-like part): create / edit / search markdown notes, `[[wikilinks]]`, backlinks, and a force-directed **knowledge graph** of how everything connects. This works fully on day one with no model trained.
+1. **A real note-taking vault** (the local knowledge-base part): create / edit / search markdown notes, `[[wikilinks]]`, backlinks, and a force-directed **knowledge graph** of how everything connects. This works fully on day one with no model trained.
 2. **On-device personalization:** the app picks the **relevant** docs from your vault (ideally automatically, by the model/embeddings) and trains a LoRA on them.
 3. **Two models:** a **base** (untrained, available from the first launch: powers search, doc-selection, and chat right away) and, after training, a **fine-tuned** model that talks like you and knows your vault.
 
@@ -32,7 +32,7 @@ S0's only question ("does a feasible on-device base sound like Thomas?") is answ
 
 A single local web app (`http://localhost:3090`, two-process: Node backend + vanilla browser frontend over WebSocket). Left rail switches panes. A persistent footer shows the LOCAL / NETWORK boundary. **Zero extra runtime deps beyond `@qvac/sdk` + `ws`** (own markdown renderer + own canvas graph, fully offline; recipe hard rule 9).
 
-### Pane 1 - Vault (the open-source Obsidian)
+### Pane 1 - Vault (the local notes vault)
 The core app, useful with no model. Points at a vault folder (a directory of `.md` files).
 
 - **Note list / tree** of the vault folder, with folders.

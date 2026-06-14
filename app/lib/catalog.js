@@ -13,7 +13,7 @@ const MODELS_DIR = path.join(os.homedir(), ".qvac", "models");
 const CURATED = [
   { name: "QWEN3_600M_INST_Q4", group: "voice", fineTunable: true, label: "Qwen3 0.6B", note: "Fastest to train. Weak in long-form; great for a first demo." },
   { name: "QWEN3_1_7B_INST_Q4", group: "voice", fineTunable: true, label: "Qwen3 1.7B", note: "Proven sweet spot, and the mobile target. ~2h to train." },
-  { name: "BITNET_B1_58_3B_INST_TQ2_0", group: "voice", fineTunable: true, label: "BitNet b1.58 3B", note: "Microsoft's ternary 3B (TQ2_0). The largest fine-tunable base here, and non-medical. ~2-4h to train." },
+  { name: "BITNET_B1_58_3B_INST_TQ2_0", group: "voice", fineTunable: true, runnable: false, label: "BitNet b1.58 3B", note: "Microsoft's ternary 3B (TQ2_0). Largest fine-tunable base, non-medical. TRAINS fine (~3h), but inference is impractical in this SDK build (overflows a normal context, very slow) - train here, run your voice on Qwen3 1.7B." },
   { name: "QWEN3_8B_INST_Q4_K_M", group: "chat", fineTunable: false, label: "Qwen3 8B", note: "Largest Qwen3. Chat only (Q4_K_M cannot be fine-tuned)." },
   { name: "QWEN3_4B_INST_Q4_K_M", group: "chat", fineTunable: false, label: "Qwen3 4B", note: "Chat only (Q4_K_M cannot be fine-tuned in this SDK)." },
   { name: "LLAMA_3_2_1B_INST_Q4_0", group: "chat", fineTunable: false, label: "Llama 3.2 1B", note: "Meta's compact instruct model (chat only: the finetuner doesn't support the Llama architecture)." },

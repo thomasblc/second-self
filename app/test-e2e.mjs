@@ -15,6 +15,7 @@ import { fileURLToPath } from "node:url";
 
 const RECIPE_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const PORT = 3099;
+const TOKEN = "e2e-test-token-" + process.pid; // known token so the no-Origin WS client can authenticate
 const WITH_MODELS = process.argv.includes("--models") || process.argv.includes("--train");
 const WITH_TRAIN = process.argv.includes("--train");
 
@@ -22,8 +23,9 @@ let pass = 0, fail = 0;
 const ok = (cond, msg) => { if (cond) { pass++; console.log("  \x1b[32mPASS\x1b[0m " + msg); } else { fail++; console.log("  \x1b[31mFAIL\x1b[0m " + msg); } };
 const section = (s) => console.log("\n\x1b[1m" + s + "\x1b[0m");
 
-// ---- build a temp vault ----
+// ---- build a temp vault + isolated config dir (don't touch the user's ~/.second-self) ----
 const vault = fs.mkdtempSync(path.join(os.tmpdir(), "ss-e2e-"));
+const configDir = fs.mkdtempSync(path.join(os.tmpdir(), "ss-cfg-"));
 fs.mkdirSync(path.join(vault, "sub"), { recursive: true });
 const longProse = (topic) => `# ${topic}\n\n` + `This note is about ${topic}. `.repeat(40);
 fs.writeFileSync(path.join(vault, "index.md"), "# Index\n\nSee [[alpha]] and [[beta]] for the details.");
@@ -34,7 +36,7 @@ fs.writeFileSync(path.join(vault, "sub", "gamma.md"), longProse("gamma travel an
 // ---- spawn server ----
 const server = spawn("node", ["app/server.js"], {
   cwd: RECIPE_ROOT,
-  env: { ...process.env, PORT: String(PORT), SECOND_SELF_VAULT: vault },
+  env: { ...process.env, PORT: String(PORT), SECOND_SELF_VAULT: vault, SECOND_SELF_TOKEN: TOKEN, SECOND_SELF_CONFIG_DIR: configDir },
   stdio: ["ignore", "pipe", "pipe"],
 });
 let serverLog = "";
@@ -61,7 +63,7 @@ const req = (type, p = {}) => new Promise((res, rej) => {
 });
 function connect() {
   return new Promise((resolve) => {
-    ws = new WebSocket(`ws://localhost:${PORT}`);
+    ws = new WebSocket(`ws://localhost:${PORT}/?t=${TOKEN}`);
     ws.addEventListener("message", (ev) => {
       const m = JSON.parse(ev.data);
       if (m.ok !== undefined && pendingMap.has(m.id)) { const { res, rej } = pendingMap.get(m.id); pendingMap.delete(m.id); m.ok ? res(m.data) : rej(new Error(m.error)); }
@@ -115,6 +117,27 @@ async function main() {
   ok(imp.written >= 1 && imp.source === "chatgpt", `cloud import wrote ${imp.written} chatgpt note(s)`);
   ok((await req("vault.list")).files.some((f) => f.path.includes("imported/chatgpt")), "imported conversation appears in the vault");
 
+  section("FOLDER BROWSER + MULTI-VAULT + CONFIG");
+  const br = await req("fs.browse", {});
+  ok(br.path && Array.isArray(br.dirs) && typeof br.home === "string", "fs.browse lists the home dir (dirs + home)");
+  let bthrew = false; try { await req("fs.mkdir", { path: vault, name: "../escape" }); } catch { bthrew = true; }
+  ok(bthrew, "fs.mkdir rejects a traversal name");
+  const mk = await req("fs.mkdir", { path: vault, name: "made-by-test" });
+  ok(mk.path.endsWith("made-by-test") && fs.existsSync(mk.path), "fs.mkdir creates a single subfolder");
+  const vlist = await req("vault.vaults");
+  ok(Array.isArray(vlist.vaults) && typeof vlist.current === "string", "vault.vaults returns the known list + current");
+  const cfg = await req("config.set", { autoRetrain: { enabled: true, intervalDays: 0, baseKey: "nonsense" } });
+  ok(cfg.autoRetrain.enabled && cfg.autoRetrain.intervalDays >= 1 && cfg.autoRetrain.baseKey === "1.7b", "config.set sanitizes interval + baseKey");
+  await req("config.set", { autoRetrain: { enabled: false } }); // never leave a scheduled retrain running
+  ok((await req("config.get")).autoRetrain.enabled === false, "config.get reflects the disabled state");
+  const v2 = fs.mkdtempSync(path.join(os.tmpdir(), "ss-e2e-v2-"));
+  fs.writeFileSync(path.join(v2, "only.md"), "# Only\n\njust one note here");
+  const sw = await req("vault.switchVault", { path: v2 });
+  ok(!sw.isDemo && (await req("vault.list")).files.length === 1, "vault.switchVault moves to the new vault");
+  await req("vault.switchVault", { path: vault }); // switch back so model-section assertions still see the original vault
+  ok((await req("vault.list")).files.some((f) => f.path === "index.md"), "switched back to the original vault");
+  fs.rmSync(v2, { recursive: true, force: true });
+
   if (WITH_MODELS) {
     section("MODELS: embed / highlight / select / rag / chat");
     const ge = await req("graph.embed");
@@ -132,7 +155,8 @@ async function main() {
 
     const cat = await req("model.catalog");
     ok(cat.models.length >= 8, `model catalog returns the curated set (${cat.models.length})`);
-    ok(cat.models.some((m) => m.name === "QWEN3_4B_INST_Q4_K_M" && m.fineTunable), "catalog marks Qwen3 4B fine-tunable");
+    ok(cat.models.some((m) => m.name === "BITNET_B1_58_3B_INST_TQ2_0" && m.fineTunable), "catalog marks BitNet 3B fine-tunable");
+    ok(cat.models.some((m) => m.name === "QWEN3_4B_INST_Q4_K_M" && !m.fineTunable), "catalog marks Qwen3 4B chat-only (Q4_K_M)");
     ok(cat.models.some((m) => m.hf && m.hf.startsWith("https://huggingface.co/")), "catalog exposes Hugging Face links");
     ok(cat.models.some((m) => m.group === "embedding"), "catalog includes an embedding model");
     // download an already-cached model -> exercises the op without a big fetch
@@ -182,6 +206,7 @@ main()
   .finally(() => {
     server.kill("SIGKILL");
     try { fs.rmSync(vault, { recursive: true, force: true }); } catch { /* */ }
+    try { fs.rmSync(configDir, { recursive: true, force: true }); } catch { /* */ }
     console.log(`\n\x1b[1m${pass} passed, ${fail} failed\x1b[0m` + (WITH_MODELS ? " (with models)" : " (core only)"));
     process.exit(fail ? 1 : 0);
   });

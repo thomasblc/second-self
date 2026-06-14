@@ -2,7 +2,7 @@
 // fine-tuned LoRA attached (a LoRA only runs on the base it was trained on). Prints the
 // answers side by side so the voice difference can be judged honestly.
 // Usage: node spike/chat-compare.js [--lora train/results/<file>.gguf]
-import { loadModel, unloadModel, completion, QWEN3_600M_INST_Q4, QWEN3_1_7B_INST_Q4, MEDGEMMA_4B_IT_Q8_0 } from "@qvac/sdk";
+import { loadModel, unloadModel, completion, QWEN3_600M_INST_Q4, QWEN3_1_7B_INST_Q4, MEDGEMMA_4B_IT_Q8_0, BITNET_B1_58_3B_INST_TQ2_0 } from "@qvac/sdk";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -13,9 +13,9 @@ const arg = (name, dflt) => { const i = process.argv.indexOf(name); return i > -
 
 const dataset = arg("--data", "bootstrap");
 const baseKey = arg("--base", "600m"); // must match the base the adapter was trained on
-const BASES = { "600m": QWEN3_600M_INST_Q4, "1.7b": QWEN3_1_7B_INST_Q4, "4b": MEDGEMMA_4B_IT_Q8_0 };
+const BASES = { "600m": QWEN3_600M_INST_Q4, "1.7b": QWEN3_1_7B_INST_Q4, "3b": BITNET_B1_58_3B_INST_TQ2_0, "4b": MEDGEMMA_4B_IT_Q8_0 };
 const BASE = BASES[baseKey];
-if (!BASE) { console.error(`unknown --base ${baseKey} (600m | 1.7b | 4b)`); process.exit(1); }
+if (!BASE) { console.error(`unknown --base ${baseKey} (600m | 1.7b | 3b | 4b)`); process.exit(1); }
 // the inference system prompt must MATCH the one used at training time:
 // whatsapp datasets train with the owner prompt (connectors/whatsapp.js), bootstrap with its own
 const owner = arg("--owner", null);

@@ -2,7 +2,7 @@
 // edges = links/tags/embed-similarity. Pan, zoom, drag, hover, click, a "selected"
 // set (training corpus) and a "highlight" set (NL query results, glowing).
 //
-// Hover dynamics (Obsidian-like) WITHOUT breaking selection: the hovered node grows
+// Hover dynamics WITHOUT breaking selection: the hovered node grows
 // in place (eased scale) and is PINNED under the cursor (fx/fy) so a click always lands;
 // a gentle one-shot reheat lets neighbors declutter, then the sim settles again.
 const EDGE_STYLE = {
