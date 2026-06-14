@@ -235,9 +235,17 @@
 
       <!-- Memory & Sync -->
       <div class="spane" data-tab="memory">
+        <div class="set-row col">
+          <div class="set-info"><b>Sources your AI can recall</b><span>Everything here is embedded on-device so the chat's <b>Memory</b> toggle can retrieve real facts with citations. Your vault is the first source; add folders of documents to widen what it knows. Nothing is uploaded.</span></div>
+          <div id="set-sources-list" class="vault-list"></div>
+        </div>
         <div class="set-row">
-          <div class="set-info"><b>Index vault for memory</b><span>Embeds your notes on-device so the chat's <b>Memory</b> toggle can retrieve real facts from them (RAG). Re-run after adding a lot of notes.</span></div>
-          <button class="btn" id="set-ingest">Index now</button>
+          <div class="set-info"><b>Index this vault for memory</b><span>(Re)index the current vault as your first source. Re-run after adding a lot of notes.</span></div>
+          <button class="btn" id="set-ingest">Index vault</button>
+        </div>
+        <div class="set-row">
+          <div class="set-info"><b>Add a folder as a source</b><span>Point the AI at a folder of documents (markdown, text, code). Read-only, indexed locally.</span></div>
+          <button class="btn primary" id="set-addsource">Add folder...</button>
         </div>
         <div class="set-row col">
           <div class="set-info"><b>Vault sync</b><span>Your notes are plain <code>.md</code> files on disk. If your vault folder lives in iCloud, Dropbox, or a git repo, those tools sync it across devices, and Second Self picks up external edits automatically (no save button needed). There is no Second Self cloud: nothing is uploaded.</span></div>

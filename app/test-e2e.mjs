@@ -146,12 +146,27 @@ async function main() {
     ok(hl.matches.some((m) => m.path === "alpha.md"), "NL highlight surfaces the cooking note");
     const sel = await req("select.auto");
     ok(sel.selection.length >= 3 && sel.selected >= 1, `auto-select returns ranked docs (${sel.selected}/${sel.selection.length})`);
-    const ing = await req("rag.ingest", { paths: ["alpha.md", "beta.md", "sub/gamma.md"] });
-    ok(ing.ingested === 3 && ing.chunks >= 3, `rag ingest ${ing.ingested} docs / ${ing.chunks} chunks`);
+    const ing = await req("rag.ingest"); // indexes the whole vault as context source #1
+    ok(ing.ingested >= 3 && ing.chunks >= 3, `rag ingest (vault) ${ing.ingested} docs / ${ing.chunks} chunks`);
     const cbase = await req("chat.send", { message: "Reply with the single word: ping.", baseKey: "1.7b", voice: false, memory: false });
     ok(cbase.contentText && cbase.contentText.length > 0, "chat (base) returns a non-empty answer");
     const cmem = await req("chat.send", { message: "What is beta about?", baseKey: "1.7b", voice: false, memory: true });
     ok(cmem.hits && cmem.hits.length > 0, `chat (memory) retrieves hits (${cmem.hits?.length})`);
+    ok(cmem.hits.every((h) => h.source && typeof h.score === "number"), "memory hits carry a citable source + score");
+
+    section("PERSONAL CONTEXT ENGINE (sources beyond the vault)");
+    const srcs0 = await req("context.sources");
+    ok(srcs0.sources.some((s) => s.type === "vault"), "vault is registered as context source #1");
+    // add a second folder source (a temp dir of docs)
+    const extra = fs.mkdtempSync(path.join(os.tmpdir(), "ss-src-"));
+    fs.writeFileSync(path.join(extra, "rocket.md"), "# Rockets\n\n" + "Rockets use staged combustion and cryogenic propellant. ".repeat(20));
+    const added = await req("context.addSource", { path: extra });
+    ok(added.source.chunkCount > 0, `context.addSource indexed a folder (${added.source.chunkCount} chunks)`);
+    const csearch = await req("context.search", { query: "how do rockets work", topK: 5 });
+    ok(csearch.hits.some((h) => h.source.includes("rocket")), "context.search finds + cites the added source");
+    await req("context.removeSource", { sourceId: added.source.id });
+    ok(!(await req("context.sources")).sources.some((s) => s.id === added.source.id), "context.removeSource forgets the source");
+    fs.rmSync(extra, { recursive: true, force: true });
 
     const cat = await req("model.catalog");
     ok(cat.models.length >= 8, `model catalog returns the curated set (${cat.models.length})`);

@@ -11,6 +11,7 @@ import { z } from "zod";
 import { Vault } from "./lib/vault.js";
 import { buildGraph, addEmbedEdges } from "./lib/graph.js";
 import { ModelManager, topKPairs, cosine, BASES } from "./lib/models.js";
+import { ContextIndex } from "./lib/context.js";
 import { buildRecords, selectByEmbedding, refineWithLLM, buildCausalDataset } from "./lib/select.js";
 import { Trainer } from "./lib/train.js";
 import { buildCatalog, constantFor, modelTypeFor, deleteCached } from "./lib/catalog.js";
@@ -86,6 +87,8 @@ function browseDir(target, { files = false, ext = null } = {}) {
 }
 const mm = new ModelManager({ ctxSize: 4096 });
 const trainer = new Trainer(RECIPE_ROOT);
+const contextIndex = new ContextIndex(); // personal context engine: source-tracked, citable, persisted
+const embedFor = (texts, opts = {}) => mm.embedMany(texts, opts); // injected into the index so it stays SDK-agnostic
 // "master machine" tunnel (Path 2): this process can BE a master (expose its vault+model
 // over P2P) and/or connect to one as a satellite (proxy all ops to it). handle() is hoisted.
 // SECURITY: the pairing code is a bearer capability, but the tunnel must NOT expose every op.
@@ -99,6 +102,7 @@ const TUNNEL_ALLOW = new Set([
   "graph.build", "graph.embed", "graph.highlight", "select.auto", "select.refine",
   "rag.ingest", "rag.forget", "model.status", "model.catalog", "model.hardware", "model.warm",
   "chat.send", "agent.chat", "train.adapters", "train.start", "train.stop",
+  "context.sources", "context.search", // satellite may read the master's context (not manage its sources)
 ]);
 const masterServer = new MasterServer((type, msg, cbs) => {
   if (!TUNNEL_ALLOW.has(type)) return cbs.fail("this operation is not allowed over the master link");
@@ -266,7 +270,7 @@ wss.on("connection", (ws) => {
 
 // Ops that load an SDK model. While a training child holds the global ~/.qvac lock,
 // these would contend with it, so refuse them until the run finishes.
-const MODEL_OPS = new Set(["graph.embed", "graph.highlight", "select.auto", "select.refine", "model.warm", "model.download", "rag.ingest", "chat.send", "agent.chat", "provider.start", "remote.connect"]);
+const MODEL_OPS = new Set(["graph.embed", "graph.highlight", "select.auto", "select.refine", "model.warm", "model.download", "rag.ingest", "chat.send", "agent.chat", "provider.start", "remote.connect", "context.addSource", "context.reindex", "context.search"]);
 
 async function handle(type, msg, { reply, fail, push }) {
   if (MODEL_OPS.has(type) && (trainer.isRunning() || retrainBusy)) return fail("training in progress - try again when it finishes");
@@ -418,15 +422,38 @@ async function handle(type, msg, { reply, fail, push }) {
       return reply({ name: msg.name, removed });
     }
 
+    // "Index vault for memory" = (re)index the current vault as source #1 of the context engine.
     case "rag.ingest": {
-      const paths = (msg.paths && msg.paths.length) ? msg.paths : vault.list().map((f) => f.path);
-      const docs = [];
-      for (const rel of paths) { try { docs.push(vault.read(rel)); } catch { /* */ } }
-      push({ type: "rag.progress", phase: "ingesting", count: docs.length });
-      const r = await mm.ragIngestDocs(docs, "me");
-      return reply({ ingested: r.docs, chunks: r.chunks });
+      for (const s of contextIndex.sources.filter((x) => x.type === "vault")) contextIndex.removeSource(s.id); // one vault source = the current vault
+      const onProgress = (d, t) => push({ type: "rag.progress", phase: "embedding", done: d, total: t });
+      const src = await contextIndex.addFolderSource({ rootPath: vault.root, label: path.basename(vault.root), type: "vault", exts: ["md", "markdown", "txt"] }, embedFor, onProgress);
+      return reply({ ingested: src.docCount, chunks: src.chunkCount });
     }
-    case "rag.forget": { await mm.ragForget("me"); return reply({ ok: true }); }
+    case "rag.forget": { for (const s of contextIndex.sources.filter((x) => x.type === "vault")) contextIndex.removeSource(s.id); return reply({ ok: true }); }
+
+    // ---- personal context engine: sources beyond the vault ----
+    case "context.sources": return reply(contextIndex.stats());
+    case "context.addSource": {
+      if (!isDir(msg.path)) return fail("pick an existing folder");
+      const onProgress = (d, t) => push({ type: "context.progress", phase: "embedding", done: d, total: t });
+      const src = await contextIndex.addFolderSource({ rootPath: msg.path, label: msg.label, type: "folder", exts: msg.exts || null }, embedFor, onProgress);
+      return reply({ source: src, ...contextIndex.stats() });
+    }
+    // NB: param is sourceId, NOT id - the WS frame already uses `id` for request matching;
+    // a payload `id` would be spread over it and the reply would never match (silent hang).
+    case "context.removeSource": { contextIndex.removeSource(msg.sourceId); return reply(contextIndex.stats()); }
+    case "context.reindex": {
+      const onProgress = (d, t) => push({ type: "context.progress", phase: "embedding", done: d, total: t });
+      await contextIndex.reindexSource(msg.sourceId, embedFor, onProgress);
+      return reply(contextIndex.stats());
+    }
+    case "context.search": {
+      const q = String(msg.query || "").trim();
+      if (!q || !contextIndex.records.length) return reply({ hits: [] });
+      const qv = (await mm.embedMany([q]))[0];
+      const hits = contextIndex.search(qv, { topK: msg.topK || 8, sourceIds: msg.sourceIds || null });
+      return reply({ hits: hits.map((h) => ({ source: h.source, sourceType: h.sourceType, score: Number(h.score.toFixed(4)), content: h.text })) });
+    }
 
     case "train.adapters": return reply({ adapters: trainer.listAdapters() });
     case "train.start": {
@@ -494,14 +521,18 @@ async function handle(type, msg, { reply, fail, push }) {
       let grounding = "";
       if (memory) {
         try {
-          const res = await mm.ragSearchQuery(message, { workspace: "me", topK: 5 });
-          const arr = Array.isArray(res) ? res : (res.documents || res.results || []);
-          hits = arr.map((h) => ({ content: h.content, score: h.score }));
-          if (hits.length) grounding = "Relevant facts from the owner's notes:\n" + hits.map((h, i) => `[${i + 1}] ${h.content}`).join("\n") + "\n\n";
+          if (contextIndex.records.length) {
+            const qv = (await mm.embedMany([message]))[0];
+            // numbered sources go to the model; the SAME records go back to the UI as citation chips,
+            // so citations come from the retrieval layer (reliable), never from the model's text.
+            hits = contextIndex.search(qv, { topK: 6 }).map((h) => ({ source: h.source, sourceType: h.sourceType, score: Number(h.score.toFixed(4)), content: h.text }));
+            if (hits.length) grounding = "Relevant excerpts from the owner's sources (cite by [n]):\n" + hits.map((h, i) => `[${i + 1}] (${h.source}) ${h.content}`).join("\n") + "\n\n";
+          }
+          if (!hits.length) push({ type: "chat.warn", message: "no indexed context yet - index a source for memory" });
         } catch (e) { push({ type: "chat.warn", message: "retrieval failed: " + e.message }); }
       }
       const sys = (voice ? "You are the owner's second self: reply in their writing voice." : "You are a helpful assistant.")
-        + (grounding ? "\nUse these facts to answer; if they don't cover it, say so.\n\n" + grounding : "");
+        + (grounding ? "\nAnswer using only these excerpts; if they don't cover it, say so. Refer to sources by their [n].\n\n" + grounding : "");
       const fullHistory = [{ role: "system", content: sys }, ...history, { role: "user", content: message }];
       push({ type: "chat.start", hits });
       const { contentText, stats } = await mm.chat(fullHistory, {

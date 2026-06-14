@@ -428,12 +428,37 @@ on("agent.edited", (m) => { toast("Agent edited " + m.path, "warn"); loadFiles()
 async function ingest() {
   const btn = $("btn-ingest");
   if (btn) { btn.textContent = "indexing..."; btn.disabled = true; }
-  toast("Indexing your notes for memory...");
-  try { const d = await request("rag.ingest", { paths: selection.size ? [...selection] : undefined }); if (btn) btn.textContent = `indexed ${d.ingested} ✓`; toast(`Indexed ${d.ingested} notes (${d.chunks} chunks) for memory`); }
+  toast("Indexing your vault for memory...");
+  try { const d = await request("rag.ingest"); if (btn) btn.textContent = `indexed ${d.ingested} ✓`; toast(`Indexed ${d.ingested} notes (${d.chunks} chunks) for memory`); if ($("settings").classList.contains("show")) renderSources(); }
   catch (e) { if (btn) btn.textContent = "index failed"; toast(e.message, "bad"); }
   finally { if (btn) { btn.disabled = false; setTimeout(() => (btn.textContent = "Index for memory"), 2500); } }
 }
 if ($("btn-ingest")) $("btn-ingest").onclick = ingest;
+on("rag.progress", (m) => { if (m.total) toast(`indexing ${m.done}/${m.total}...`); });
+on("context.progress", (m) => { if (m.total && m.done % 200 === 0) toast(`indexing ${m.done}/${m.total}...`); });
+
+// ---- personal context sources (Settings -> Memory & Sources) ----
+async function renderSources() {
+  const el = $("set-sources-list"); if (!el) return;
+  let d; try { d = await request("context.sources"); } catch { return; }
+  if (!d.sources.length) { el.innerHTML = `<div style="color:var(--mut);font-size:12px">No sources yet. Index your vault, or add a folder below.</div>`; return; }
+  el.innerHTML = d.sources.map((s) => `
+    <div class="vault-item" data-id="${escapeHtml(s.id)}">
+      <div class="vi-main"><div class="vi-name">${s.type === "vault" ? "&#128214; " : "&#128193; "}${escapeHtml(s.label)}</div>
+        <div class="vi-path">${escapeHtml(s.path)} &middot; ${s.chunkCount} chunks from ${s.docCount} files</div></div>
+      <button class="btn vi-act" data-reindex="${escapeHtml(s.id)}" title="Re-index">&#8635;</button>
+      <button class="vi-remove" data-rm="${escapeHtml(s.id)}" title="Remove from memory (does not delete files)">&times;</button>
+    </div>`).join("");
+  el.querySelectorAll("[data-reindex]").forEach((b) => b.onclick = async () => { toast("Re-indexing..."); try { await request("context.reindex", { sourceId: b.dataset.reindex }); toast("Re-indexed"); renderSources(); } catch (e) { toast(e.message, "bad"); } });
+  el.querySelectorAll("[data-rm]").forEach((b) => b.onclick = async () => { try { await request("context.removeSource", { sourceId: b.dataset.rm }); renderSources(); toast("Removed from memory"); } catch (e) { toast(e.message, "bad"); } });
+}
+async function addSourceFlow() {
+  const dir = await pickPath({ title: "Add a folder as a source", mode: "folder" });
+  if (!dir) return;
+  toast("Indexing the folder (first run loads the embedder)...");
+  try { const r = await request("context.addSource", { path: dir }); toast(`Added: ${r.source.docCount} files, ${r.source.chunkCount} chunks`); renderSources(); }
+  catch (e) { toast("Could not add source: " + e.message, "bad"); }
+}
 on("chat.token", (m) => { if (curAssistantEl) { curAssistantEl._raw += m.text; curAssistantEl.querySelector(".body").innerHTML = renderMarkdown(curAssistantEl._raw); messages.scrollTop = messages.scrollHeight; } });
 on("chat.warn", (m) => toast(m.message, "warn"));
 function addMsg(role, text) {
@@ -441,6 +466,20 @@ function addMsg(role, text) {
   const el = document.createElement("div"); el.className = "msg " + role; el._raw = text || "";
   el.innerHTML = (role === "assistant" ? `<div class="who">second self</div>` : "") + `<div class="body">${renderMarkdown(text || "")}</div>`;
   messages.appendChild(el); messages.scrollTop = messages.scrollHeight; return el;
+}
+// citations come from the RETRIEVAL layer (reliable), never parsed from the model's text.
+function renderCitations(el, hits) {
+  const wrap = document.createElement("div"); wrap.className = "cites";
+  wrap.appendChild(Object.assign(document.createElement("span"), { className: "cites-label", textContent: "sources" }));
+  for (const h of hits) {
+    const name = String(h.source || "?").split("/").pop();
+    const chip = document.createElement("span"); chip.className = "cite";
+    chip.title = `${h.source}  ·  ${Math.round((h.score || 0) * 100)}% match\n\n${String(h.content || "").slice(0, 320)}`;
+    chip.innerHTML = `<span class="cite-ic">${h.sourceType === "vault" ? "&#128196;" : "&#128193;"}</span>${escapeHtml(name)} <span class="cite-score">${Math.round((h.score || 0) * 100)}%</span>`;
+    chip.onclick = () => { if (h.sourceType === "vault" && byPath.has(h.source)) openNote(h.source); else toast(`${h.source}: ${String(h.content || "").slice(0, 220)}`); };
+    wrap.appendChild(chip);
+  }
+  el.appendChild(wrap); messages.scrollTop = messages.scrollHeight;
 }
 async function send() {
   if (chatBusy) return;
@@ -467,7 +506,7 @@ async function send() {
     const d = await request("chat.send", { message: text, history, baseKey, adapter, voice, memory });
     history.push({ role: "user", content: text }, { role: "assistant", content: d.contentText });
     if (history.length > 12) history = history.slice(-12);
-    if (d.hits && d.hits.length) { const h = document.createElement("div"); h.className = "hits"; h.innerHTML = "memory used: " + d.hits.map((x) => `<span class="hit-score">${x.score?.toFixed(2)}</span>`).join(" "); curAssistantEl.appendChild(h); }
+    if (d.hits && d.hits.length) renderCitations(curAssistantEl, d.hits);
     $("chat-model-state").textContent = `${baseKey}${d.model?.voice ? " · voice" : ""}${d.model?.memory ? " · memory" : ""}${d.stats?.tokensPerSecond ? " · " + d.stats.tokensPerSecond.toFixed(0) + " tok/s" : ""}`;
   } catch (e) { curAssistantEl.querySelector(".body").innerHTML = `<span style="color:var(--bad)">${escapeHtml(e.message)}</span>`; $("chat-model-state").textContent = ""; }
   finally { chatBusy = false; $("btn-send").disabled = false; }
@@ -739,6 +778,7 @@ function setSettingsTab(tab) {
   settings.querySelectorAll(".stab").forEach((t) => t.classList.toggle("active", t.dataset.tab === tab));
   settings.querySelectorAll(".spane").forEach((p) => p.classList.toggle("active", p.dataset.tab === tab));
   if (tab === "vault") renderVaultList($("set-vault-list"));
+  if (tab === "memory") renderSources();
   if (tab === "devices") refreshDevicesStatus();
 }
 $("btn-settings").onclick = () => openSettings();
@@ -746,7 +786,8 @@ $("settings-close").onclick = closeSettings;
 settings.addEventListener("click", (e) => { if (e.target === settings) closeSettings(); });
 settings.querySelectorAll(".stab").forEach((t) => t.onclick = () => setSettingsTab(t.dataset.tab));
 $("set-onboard").onclick = () => { closeSettings(); startOnboarding(true); };
-$("set-ingest").onclick = () => { closeSettings(); switchPane("chat"); ingest(); };
+$("set-ingest").onclick = () => ingest(); // stay in Settings so the source list updates in place
+$("set-addsource").onclick = addSourceFlow;
 $("set-open").onclick = () => { closeSettings(); openVaultFlow(); };
 $("set-newvault").onclick = () => { closeSettings(); createVaultFlow(); };
 $("set-import").onclick = () => { closeSettings(); importCloudFlow(); };

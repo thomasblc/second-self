@@ -8,6 +8,7 @@ Second Self is a local, private notes vault that can also train a small AI model
 
 ## What it does
 
+- **A personal context engine (knows what you know).** Point it at your data and it builds a source-tracked, on-device index. Ask anything with **Memory** on and you get an answer grounded in your own files, with **clickable citations** to the exact source (the citations come from the retrieval layer, not the model, so they're always real). Your vault is source #1; add folders of documents (markdown, text, code) from Settings -> Memory & Sources. Everything is embedded and stored locally; nothing is uploaded. Think of it as a private, EU-friendly take on Apple-Intelligence-style personal context.
 - **A real notes vault.** Create, edit, rename, search and link markdown notes with `[[wikilinks]]`. Live preview with callouts, tables, task lists and tags. Backlinks. Collapsible folder tree. Autosave.
 - **A knowledge graph.** Every note is a node. Edges come from your links, shared tags, and on-device **embedding similarity**, so related notes connect even when you never linked them. Hover to explore, drag to rearrange.
 - **Natural-language highlight.** Type "highlight notes about travel" and the model lights up the matching notes on the graph.
