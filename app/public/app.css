@@ -189,6 +189,7 @@ select, .num { background: var(--bg); border: 1px solid var(--line); color: var(
 .cites-label { font-size: 10px; text-transform: uppercase; letter-spacing: .5px; color: var(--mut); margin-right: 2px; }
 .cite { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; background: var(--bg3); border: 1px solid var(--line); border-radius: 14px; padding: 3px 9px; cursor: pointer; transition: border-color .15s; max-width: 240px; }
 .cite:hover { border-color: var(--accent); }
+.cite .cite-n { color: var(--mut); font-family: var(--mono); font-size: 10px; }
 .cite .cite-ic { font-size: 12px; }
 .cite .cite-score { color: var(--accent); font-family: var(--mono); font-size: 10px; }
 .agent-acts { font-size: 11px; color: var(--mut); margin-bottom: 6px; border-left: 2px solid var(--accent); padding-left: 8px; }

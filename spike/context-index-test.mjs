@@ -33,8 +33,14 @@ const ok = (c, m) => { if (c) { pass++; console.log("  PASS " + m); } else { fai
   const hits2 = ix2.search(qv, { topK: 3 });
   ok(hits2.length === hits.length && hits2[0].source === hits[0].source, "reloaded index searches identically");
 
+  // reindex is atomic (build-then-swap): data survives, count stays consistent
+  const before = ix2.records.length;
+  const re = await ix2.reindexSource(src.id, embed);
+  ok(ix2.records.length === before && re.chunkCount === before, `reindex rebuilds atomically (${re.chunkCount} chunks)`);
+  ok(ix2.records.length === ix2.vectors.length, "records/vectors aligned after reindex");
+
   // remove
-  ix2.removeSource(src.id);
+  ix2.removeSource(re.id);
   ok(ix2.records.length === 0 && ix2.vectors.length === 0 && ix2.sources.length === 0, "removeSource clears records + vectors + source");
   const ix3 = new ContextIndex();
   ok(ix3.records.length === 0, "removal persisted");

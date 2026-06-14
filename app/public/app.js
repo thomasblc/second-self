@@ -434,8 +434,10 @@ async function ingest() {
   finally { if (btn) { btn.disabled = false; setTimeout(() => (btn.textContent = "Index for memory"), 2500); } }
 }
 if ($("btn-ingest")) $("btn-ingest").onclick = ingest;
-on("rag.progress", (m) => { if (m.total) toast(`indexing ${m.done}/${m.total}...`); });
-on("context.progress", (m) => { if (m.total && m.done % 200 === 0) toast(`indexing ${m.done}/${m.total}...`); });
+// one throttle for both: show the first, the finish, and a milestone every ~1000 chunks (no spam)
+const indexProgress = (m) => { if (m.total && (m.done === m.total || m.done <= 16 || m.done % 1000 === 0)) toast(`indexing ${m.done}/${m.total}...`); };
+on("rag.progress", indexProgress);
+on("context.progress", indexProgress);
 
 // ---- personal context sources (Settings -> Memory & Sources) ----
 async function renderSources() {
@@ -471,14 +473,15 @@ function addMsg(role, text) {
 function renderCitations(el, hits) {
   const wrap = document.createElement("div"); wrap.className = "cites";
   wrap.appendChild(Object.assign(document.createElement("span"), { className: "cites-label", textContent: "sources" }));
-  for (const h of hits) {
+  hits.forEach((h, i) => {
     const name = String(h.source || "?").split("/").pop();
     const chip = document.createElement("span"); chip.className = "cite";
     chip.title = `${h.source}  ·  ${Math.round((h.score || 0) * 100)}% match\n\n${String(h.content || "").slice(0, 320)}`;
-    chip.innerHTML = `<span class="cite-ic">${h.sourceType === "vault" ? "&#128196;" : "&#128193;"}</span>${escapeHtml(name)} <span class="cite-score">${Math.round((h.score || 0) * 100)}%</span>`;
+    // the chip number matches the [n] the model cites in its answer (same order as the grounding)
+    chip.innerHTML = `<span class="cite-n">[${i + 1}]</span><span class="cite-ic">${h.sourceType === "vault" ? "&#128196;" : "&#128193;"}</span>${escapeHtml(name)} <span class="cite-score">${Math.round((h.score || 0) * 100)}%</span>`;
     chip.onclick = () => { if (h.sourceType === "vault" && byPath.has(h.source)) openNote(h.source); else toast(`${h.source}: ${String(h.content || "").slice(0, 220)}`); };
     wrap.appendChild(chip);
-  }
+  });
   el.appendChild(wrap); messages.scrollTop = messages.scrollHeight;
 }
 async function send() {

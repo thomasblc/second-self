@@ -48,27 +48,37 @@ export class ContextIndex {
       this.sources = Array.isArray(meta.sources) ? meta.sources : [];
       this.records = Array.isArray(meta.records) ? meta.records : [];
       this.dim = Number(meta.dim) || 0;
-      if (this.dim && this.records.length && fs.existsSync(VECS)) {
-        const buf = fs.readFileSync(VECS);
-        const f = new Float32Array(buf.buffer, buf.byteOffset, Math.floor(buf.byteLength / 4));
+      if (this.dim && this.records.length) {
+        const buf = fs.readFileSync(VECS); // throws if missing -> caught -> reset (safe)
+        // a torn/partial write leaves meta and vectors out of sync. Validate the EXACT byte size
+        // (count alone is not enough: a short buffer yields empty subarrays that pass a count check).
+        if (buf.byteLength !== this.records.length * this.dim * 4) throw new Error("vector file size mismatch");
+        const f = new Float32Array(buf.buffer, buf.byteOffset, buf.byteLength / 4);
         this.vectors = [];
         for (let i = 0; i < this.records.length; i++) this.vectors.push(Array.from(f.subarray(i * this.dim, (i + 1) * this.dim)));
-      }
-      // corruption guard: records and vectors must stay aligned
-      if (this.vectors.length !== this.records.length) { this.records = []; this.vectors = []; this.sources = this.sources.map((s) => ({ ...s, docCount: 0, chunkCount: 0 })); }
-    } catch { this.sources = []; this.records = []; this.vectors = []; this.dim = 0; }
+      } else if (this.records.length) { throw new Error("records without a dim"); }
+      if (this.vectors.length !== this.records.length) throw new Error("record/vector misalignment");
+    } catch {
+      // fail closed: drop chunks/vectors but KEEP source configs (zeroed) so the user can re-index.
+      this.records = []; this.vectors = []; this.dim = 0;
+      this.sources = (this.sources || []).map((s) => ({ ...s, docCount: 0, chunkCount: 0 }));
+    }
   }
 
+  // Atomic-ish save: write each file to a temp then rename. The two files aren't atomic together,
+  // but _load's exact-byte-size check rejects any torn pair and resets, so we never load garbage.
   _save() {
     try {
       fs.mkdirSync(DIR, { recursive: true });
-      fs.writeFileSync(META, JSON.stringify({ dim: this.dim, sources: this.sources, records: this.records }));
       if (this.dim && this.vectors.length) {
         const f = new Float32Array(this.vectors.length * this.dim);
         for (let i = 0; i < this.vectors.length; i++) f.set(this.vectors[i], i * this.dim);
-        fs.writeFileSync(VECS, Buffer.from(f.buffer, f.byteOffset, f.byteLength));
+        fs.writeFileSync(VECS + ".tmp", Buffer.from(f.buffer, f.byteOffset, f.byteLength));
+        fs.renameSync(VECS + ".tmp", VECS);
       } else { try { fs.unlinkSync(VECS); } catch { /* */ } }
-    } catch { /* non-fatal: index still works in memory this session */ }
+      fs.writeFileSync(META + ".tmp", JSON.stringify({ dim: this.dim, sources: this.sources, records: this.records }));
+      fs.renameSync(META + ".tmp", META);
+    } catch (e) { console.error("[context] save failed (index kept in memory this session):", e?.message || e); }
   }
 
   stats() {
@@ -104,33 +114,43 @@ export class ContextIndex {
     return out;
   }
 
-  // Index a folder as a source. embed(texts,{onProgress}) -> number[][]. Returns the source meta.
-  async addFolderSource({ rootPath, label, type = "folder", exts = null }, embed, onProgress) {
+  // Build a source's records + vectors WITHOUT mutating the index (so a failed embed never
+  // corrupts existing data). embed(texts,{onProgress}) -> number[][].
+  async _buildFolder({ rootPath, type = "folder", exts = null }, embed, onProgress) {
     const rootAbs = path.resolve(rootPath);
     if (!fs.existsSync(rootAbs) || !fs.statSync(rootAbs).isDirectory()) throw new Error("not a folder: " + rootPath);
-    if (this.findByPath(rootAbs)) throw new Error("that folder is already a source");
     const extSet = exts && exts.length ? new Set(exts.map((x) => (x.startsWith(".") ? x : "." + x).toLowerCase())) : null;
     const files = this._walk(rootAbs, extSet);
-
-    const newRecords = [];
+    const records = [];
     for (const f of files) {
       let content; try { content = fs.readFileSync(f.abs, "utf8"); } catch { continue; }
-      for (const c of chunkText(content, 120, 20)) newRecords.push({ sourceId: null, source: f.rel, sourceType: type, text: c });
+      for (const c of chunkText(content, 120, 20)) records.push({ sourceId: null, source: f.rel, sourceType: type, text: c });
     }
-    if (!newRecords.length) throw new Error("no readable text files found in that folder");
+    if (!records.length) throw new Error("no readable text files found in that folder");
+    const vectors = await embed(records.map((r) => r.text), { onProgress });
+    if (vectors.length !== records.length) throw new Error("embedding returned the wrong count");
+    return { rootAbs, fileCount: files.length, records, vectors, dim: vectors[0].length };
+  }
 
-    const vectors = await embed(newRecords.map((r) => r.text), { onProgress });
-    if (!vectors.length) throw new Error("embedding produced no vectors");
-    if (!this.dim) this.dim = vectors[0].length;
-
+  // Commit a built source into the index. Pushes in a LOOP (spread `push(...arr)` throws a
+  // RangeError past ~125k args - real for big folders). Returns the source meta.
+  _commit(built, { type, label, exts }) {
+    if (this.dim && built.dim !== this.dim) throw new Error(`embedding dim mismatch (${built.dim} vs ${this.dim})`);
+    if (!this.dim) this.dim = built.dim;
     const id = rid();
-    for (const r of newRecords) r.sourceId = id;
-    this.records.push(...newRecords);
-    this.vectors.push(...vectors);
-    const src = { id, type, path: rootAbs, label: label || path.basename(rootAbs), exts: exts || null, addedAt: Date.now(), lastIndexedAt: Date.now(), docCount: files.length, chunkCount: newRecords.length };
+    for (const r of built.records) { r.sourceId = id; this.records.push(r); }
+    for (const v of built.vectors) this.vectors.push(v);
+    const src = { id, type, path: built.rootAbs, label: label || path.basename(built.rootAbs), exts: exts || null, addedAt: Date.now(), lastIndexedAt: Date.now(), docCount: built.fileCount, chunkCount: built.records.length };
     this.sources.push(src);
     this._save();
     return src;
+  }
+
+  // Index a new folder source (build first, then commit). Returns the source meta.
+  async addFolderSource({ rootPath, label, type = "folder", exts = null }, embed, onProgress) {
+    if (this.findByPath(path.resolve(rootPath))) throw new Error("that folder is already a source");
+    const built = await this._buildFolder({ rootPath, type, exts }, embed, onProgress);
+    return this._commit(built, { type, label, exts });
   }
 
   // Remove a source and ALL its records/vectors (kept perfectly aligned).
@@ -144,12 +164,14 @@ export class ContextIndex {
     return true;
   }
 
+  // Re-index a source: BUILD the fresh data first; only remove the old + commit once it succeeds.
+  // (Removing first would lose the source on an empty/deleted folder or an embed failure.)
   async reindexSource(id, embed, onProgress) {
     const src = this.getSource(id);
     if (!src) throw new Error("unknown source");
-    const cfg = { rootPath: src.path, label: src.label, type: src.type, exts: src.exts };
+    const built = await this._buildFolder({ rootPath: src.path, type: src.type, exts: src.exts }, embed, onProgress);
     this.removeSource(id);
-    return this.addFolderSource(cfg, embed, onProgress);
+    return this._commit(built, { type: src.type, label: src.label, exts: src.exts });
   }
 
   // Cosine top-k over all (or a filtered set of) sources. Returns citable records + scores.

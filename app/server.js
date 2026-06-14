@@ -423,10 +423,18 @@ async function handle(type, msg, { reply, fail, push }) {
     }
 
     // "Index vault for memory" = (re)index the current vault as source #1 of the context engine.
+    // Build-then-swap so a failed/empty re-index never wipes existing memory (review P0-4).
     case "rag.ingest": {
-      for (const s of contextIndex.sources.filter((x) => x.type === "vault")) contextIndex.removeSource(s.id); // one vault source = the current vault
       const onProgress = (d, t) => push({ type: "rag.progress", phase: "embedding", done: d, total: t });
-      const src = await contextIndex.addFolderSource({ rootPath: vault.root, label: path.basename(vault.root), type: "vault", exts: ["md", "markdown", "txt"] }, embedFor, onProgress);
+      const existing = contextIndex.sources.find((s) => s.type === "vault");
+      let src;
+      if (existing && path.resolve(existing.path) === path.resolve(vault.root)) {
+        src = await contextIndex.reindexSource(existing.id, embedFor, onProgress); // same vault, refresh (atomic)
+      } else {
+        // first index, or the vault changed: build the new one (throws before touching anything if empty),
+        src = await contextIndex.addFolderSource({ rootPath: vault.root, label: path.basename(vault.root), type: "vault", exts: ["md", "markdown", "txt"] }, embedFor, onProgress);
+        for (const s of contextIndex.sources.filter((x) => x.type === "vault" && x.id !== src.id)) contextIndex.removeSource(s.id); // then drop stale vault sources
+      }
       return reply({ ingested: src.docCount, chunks: src.chunkCount });
     }
     case "rag.forget": { for (const s of contextIndex.sources.filter((x) => x.type === "vault")) contextIndex.removeSource(s.id); return reply({ ok: true }); }
@@ -451,7 +459,7 @@ async function handle(type, msg, { reply, fail, push }) {
       const q = String(msg.query || "").trim();
       if (!q || !contextIndex.records.length) return reply({ hits: [] });
       const qv = (await mm.embedMany([q]))[0];
-      const hits = contextIndex.search(qv, { topK: msg.topK || 8, sourceIds: msg.sourceIds || null });
+      const hits = contextIndex.search(qv, { topK: Math.min(Number(msg.topK) || 8, 50), sourceIds: msg.sourceIds || null });
       return reply({ hits: hits.map((h) => ({ source: h.source, sourceType: h.sourceType, score: Number(h.score.toFixed(4)), content: h.text })) });
     }
 
