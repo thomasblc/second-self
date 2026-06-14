@@ -70,9 +70,8 @@
           <h3>2. Train a LoRA on you</h3>
           <div class="row">base
             <select id="base-pick">
-              <option value="1.7b">Qwen3 1.7B (proven, ~2h)</option>
-              <option value="4b">MedGemma 4B Q8_0 (recommended, ~4-6h)</option>
-              <option value="600m">Qwen3 0.6B (fast, weak)</option>
+              <option value="1.7b">Qwen3 1.7B (recommended, proven, ~2h)</option>
+              <option value="600m">Qwen3 0.6B (fast, weaker)</option>
             </select>
           </div>
           <div class="row">epochs <input class="num" id="epochs" type="number" value="1" min="1" max="4" style="width:54px">
@@ -93,7 +92,7 @@
     <section class="pane" id="chat-pane">
       <div class="chat-bar">
         <label class="toggle">model
-          <select id="chat-base"><option value="1.7b">1.7B</option><option value="4b">4B</option><option value="8b">8B</option><option value="600m">0.6B</option></select>
+          <select id="chat-base"><option value="1.7b">Qwen3 1.7B</option><option value="1b">Llama 1B</option><option value="8b">Qwen3 8B</option><option value="600m">Qwen3 0.6B</option></select>
         </label>
         <label class="toggle"><input type="checkbox" id="tg-voice"> Voice (your LoRA)</label>
         <select id="chat-adapter" class="num" style="display:none"></select>

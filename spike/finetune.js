@@ -6,9 +6,10 @@
 // Usage: node spike/finetune.js [--data bootstrap|whatsapp] [--epochs 2]
 // NOTE: the finetuner only accepts F32/F16/Q4_0/Q8_0/TQ quants. Q4_K_M is REJECTED
 // (file_type=15). EVERY Qwen3-4B/8B constant in the SDK is Q4_K_M (even the "Q4_0 shard"
-// reports file_type=15), so they CANNOT be fine-tuned. The only genuinely fine-tunable ~4B
-// is MedGemma-4B Q8_0 (a Gemma-3-4B base, medically tuned). 600M/1.7B Qwen3 are real Q4_0.
-import { finetune, loadModel, unloadModel, QWEN3_600M_INST_Q4, QWEN3_1_7B_INST_Q4, MEDGEMMA_4B_IT_Q8_0 } from "@qvac/sdk";
+// reports file_type=15), so they CANNOT be fine-tuned. The only Q8_0 4B is MedGemma (a
+// MEDICAL Gemma-3-4B) which we intentionally do NOT offer as a personal-voice base. So the
+// confirmed, relevant fine-tunable bases are Qwen3 0.6B + 1.7B (genuine Q4_0).
+import { finetune, loadModel, unloadModel, QWEN3_600M_INST_Q4, QWEN3_1_7B_INST_Q4 } from "@qvac/sdk";
 import os from "node:os";
 import fs from "node:fs";
 import path from "node:path";
@@ -31,10 +32,10 @@ const microArg = arg("--micro", null);
 // 1e-4 (the SDK example value) made the loss climb then diverge to NaN on real chat data;
 // 5e-5 is the safer default for this dataset size
 const lr = Number(arg("--lr", "5e-5"));
-const baseKey = arg("--base", "600m"); // 600m | 1.7b | 4b (Q4_0 bases; a LoRA only runs on the base it was trained on)
-const BASES = { "600m": QWEN3_600M_INST_Q4, "1.7b": QWEN3_1_7B_INST_Q4, "4b": MEDGEMMA_4B_IT_Q8_0 };
+const baseKey = arg("--base", "600m"); // 600m | 1.7b (Q4_0 bases; a LoRA only runs on the base it was trained on)
+const BASES = { "600m": QWEN3_600M_INST_Q4, "1.7b": QWEN3_1_7B_INST_Q4 };
 const BASE = BASES[baseKey];
-if (!BASE) { console.error(`ABORT: unknown/non-fine-tunable --base ${baseKey} (600m | 1.7b | 4b; 8B is Q4_K_M and cannot be fine-tuned)`); process.exit(1); }
+if (!BASE) { console.error(`ABORT: unknown/non-fine-tunable --base ${baseKey} (600m | 1.7b; Qwen3 4B/8B are Q4_K_M and cannot be fine-tuned)`); process.exit(1); }
 // SFT (chat, loss on assistant turns, JSONL) vs Causal (raw long-form text, .txt). Vault notes = causal.
 const mode = arg("--mode", "sft"); // sft | causal
 const ext = mode === "causal" ? "txt" : "jsonl";

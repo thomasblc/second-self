@@ -6,17 +6,18 @@ import {
   loadModel, unloadModel, completion, embed,
   ragIngest, ragSearch, ragCloseWorkspace, ragDeleteWorkspace,
   startQVACProvider, stopQVACProvider,
-  QWEN3_1_7B_INST_Q4, MEDGEMMA_4B_IT_Q8_0, QWEN3_8B_INST_Q4_K_M, QWEN3_600M_INST_Q4,
+  QWEN3_1_7B_INST_Q4, LLAMA_3_2_1B_INST_Q4_0, QWEN3_8B_INST_Q4_K_M, QWEN3_600M_INST_Q4,
   EMBEDDINGGEMMA_300M_Q4_0,
 } from "@qvac/sdk";
 
 // Same keys as spike/finetune.js so a LoRA trained there loads here on the SAME base.
-// 4b is MedGemma-4B Q8_0 (the only genuinely fine-tunable ~4B; every Qwen3-4B/8B constant
-// is Q4_K_M and the finetuner rejects that). 8b is Q4_K_M = chat-only.
+// Fine-tunable + relevant bases: Qwen3 0.6B + 1.7B (genuine Q4_0). Llama-3.2-1B (Q4_0) is
+// offered for chat (fine-tune support pending a probe). Qwen3 8B is Q4_K_M = chat-only.
+// (Qwen3 4B/8B can't be fine-tuned; the only Q8_0 4B was medical and was dropped.)
 export const BASES = {
   "600m": QWEN3_600M_INST_Q4,
   "1.7b": QWEN3_1_7B_INST_Q4,
-  "4b": MEDGEMMA_4B_IT_Q8_0,
+  "1b": LLAMA_3_2_1B_INST_Q4_0,
   "8b": QWEN3_8B_INST_Q4_K_M,
 };
 
