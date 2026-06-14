@@ -32,10 +32,6 @@ function cachedFiles() {
   try { return fs.readdirSync(MODELS_DIR); } catch { return []; }
 }
 
-export function isCached(m) {
-  return cachedFiles().some((f) => f.endsWith(m.modelId));
-}
-
 export function buildCatalog() {
   const files = cachedFiles();
   return CURATED.map((c) => {

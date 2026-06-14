@@ -4,7 +4,6 @@
 // rag/rag-sqlite.js, embed.d.ts). Do NOT improvise the surface.
 import {
   loadModel, unloadModel, completion, embed,
-  ragIngest, ragSearch, ragCloseWorkspace, ragDeleteWorkspace,
   startQVACProvider, stopQVACProvider,
   QWEN3_1_7B_INST_Q4, LLAMA_3_2_1B_INST_Q4_0, QWEN3_8B_INST_Q4_K_M, QWEN3_600M_INST_Q4,
   BITNET_B1_58_3B_INST_TQ2_0, EMBEDDINGGEMMA_300M_Q4_0,
@@ -29,7 +28,17 @@ export class ModelManager {
     this.emb = null;   // { modelId } (always local: the vault never leaves)
     this.remote = null;    // { providerPublicKey } -> chat/agent completions run on a remote machine
     this.provider = null;  // this machine's provider public key when sharing its GPU
-    this._llmLock = Promise.resolve();
+    // ONE mutex for the single global ~/.qvac worker. EVERY worker RPC (load, completion, embed,
+    // unload, download) serializes on it - the WS dispatcher runs handlers concurrently, so without
+    // this an embed (memory/context/select) could collide with a chat/load on the one worker.
+    this._lock = Promise.resolve();
+  }
+
+  // chain fn after the current lock holder; the lock advances even if fn rejects
+  _serialize(fn) {
+    const run = this._lock.then(() => fn());
+    this._lock = run.then(() => {}, () => {});
+    return run;
   }
 
   status() {
@@ -55,32 +64,36 @@ export class ModelManager {
   // Run fn(modelId) holding the single-LLM-slot lock for the WHOLE duration, ensuring the
   // requested (base, lora) is loaded first. Holding across the completion (not just the
   // load) is what stops a second chat from reloading/unloading the slot mid-stream.
-  async _withLLM({ baseKey = "1.7b", lora = null, reasoningBudget = 0, tools = false } = {}, fn = null) {
-    const run = this._llmLock.then(async () => {
-      // tools + remote are load-time, so both are part of the slot identity (normal local chat
-      // stays tools-free + local). When a remote is connected, the LLM runs on that machine.
-      const remote = this.getRemote();
-      if (!(this.llm && this.llm.baseKey === baseKey && (this.llm.lora || null) === (lora || null) && !!this.llm.tools === !!tools && (this.llm.remote || null) === (remote || null))) {
-        if (this.llm) {
-          try { await unloadModel({ modelId: this.llm.modelId, clearStorage: false }); } catch { /* */ }
-          this.llm = null;
-        }
-        const src = BASES[baseKey];
-        if (!src) throw new Error(`unknown base ${baseKey}`);
-        const modelConfig = { device: "gpu", ctx_size: this.ctxSize, reasoning_budget: reasoningBudget };
-        if (lora) modelConfig.lora = lora;
-        if (tools) { modelConfig.tools = true; modelConfig.toolsMode = "dynamic"; }
-        const opts = { modelSrc: src, modelType: "llm", modelConfig };
-        // fallbackToLocal:false so a connected-but-unreachable remote errors honestly
-        // (instead of silently running local and pretending it is remote).
-        if (remote) opts.delegate = { providerPublicKey: remote, fallbackToLocal: false };
-        const modelId = await loadModel(opts);
-        this.llm = { modelId, baseKey, lora: lora || null, tools: !!tools, remote: remote || null };
+  // Ensure the requested (base, lora, tools, remote) LLM slot is loaded. NOT locked itself -
+  // callers run it inside _serialize so it never races another worker RPC.
+  async _loadLLMUnlocked({ baseKey = "1.7b", lora = null, reasoningBudget = 0, tools = false } = {}) {
+    // tools + remote are load-time, so both are part of the slot identity (normal local chat
+    // stays tools-free + local). When a remote is connected, the LLM runs on that machine.
+    const remote = this.getRemote();
+    if (!(this.llm && this.llm.baseKey === baseKey && (this.llm.lora || null) === (lora || null) && !!this.llm.tools === !!tools && (this.llm.remote || null) === (remote || null))) {
+      if (this.llm) {
+        try { await unloadModel({ modelId: this.llm.modelId, clearStorage: false }); } catch { /* */ }
+        this.llm = null;
       }
-      return fn ? await fn(this.llm.modelId) : this.llm.modelId;
-    });
-    this._llmLock = run.then(() => {}, () => {});
-    return run;
+      const src = BASES[baseKey];
+      if (!src) throw new Error(`unknown base ${baseKey}`);
+      const modelConfig = { device: "gpu", ctx_size: this.ctxSize, reasoning_budget: reasoningBudget };
+      if (lora) modelConfig.lora = lora;
+      if (tools) { modelConfig.tools = true; modelConfig.toolsMode = "dynamic"; }
+      const opts = { modelSrc: src, modelType: "llm", modelConfig };
+      // fallbackToLocal:false so a connected-but-unreachable remote errors honestly
+      // (instead of silently running local and pretending it is remote).
+      if (remote) opts.delegate = { providerPublicKey: remote, fallbackToLocal: false };
+      const modelId = await loadModel(opts);
+      this.llm = { modelId, baseKey, lora: lora || null, tools: !!tools, remote: remote || null };
+    }
+    return this.llm.modelId;
+  }
+
+  // Run fn(modelId) holding the worker mutex for the WHOLE duration (load + completion), so a
+  // second chat/embed can't reload/unload the slot mid-stream.
+  async _withLLM(opts = {}, fn = null) {
+    return this._serialize(async () => { const id = await this._loadLLMUnlocked(opts); return fn ? await fn(id) : id; });
   }
 
   // Agentic chat: the model can call vault tools (search/read/list/edit). Loops until it
@@ -114,60 +127,42 @@ export class ModelManager {
 
   async ensureLLM(opts = {}) { return this._withLLM(opts, null); }
 
-  async ensureEmbed() {
+  async _ensureEmbedUnlocked() {
     if (this.emb) return this.emb.modelId;
     const modelId = await loadModel({ modelSrc: EMBEDDINGGEMMA_300M_Q4_0, modelType: "llamacpp-embedding" });
     this.emb = { modelId };
     return modelId;
   }
+  async ensureEmbed() { return this._serialize(() => this._ensureEmbedUnlocked()); }
 
   // Fetch a model's weights into ~/.qvac/models (loadModel downloads, then we unload).
   // onProgress receives the SDK load/download progress ({ percentage }). Loads with a
   // small ctx and no GPU to keep the transient footprint down; it is only being cached.
   async download(modelSrc, modelType, onProgress) {
-    const modelConfig = modelType === "llm" ? { ctx_size: 256 } : {};
-    const modelId = await loadModel({ modelSrc, modelType, modelConfig, onProgress });
-    try { await unloadModel({ modelId, clearStorage: false }); } catch { /* */ }
-    return true;
+    return this._serialize(async () => {
+      const modelConfig = modelType === "llm" ? { ctx_size: 256 } : {};
+      const modelId = await loadModel({ modelSrc, modelType, modelConfig, onProgress });
+      try { await unloadModel({ modelId, clearStorage: false }); } catch { /* */ }
+      return true;
+    });
   }
 
   // Embed many texts; batches to keep each RPC small. Returns number[][] aligned to input.
   async embedMany(texts, { batch = 16, onProgress } = {}) {
-    const modelId = await this.ensureEmbed();
-    const out = [];
-    for (let i = 0; i < texts.length; i += batch) {
-      const slice = texts.slice(i, i + batch);
-      const res = await embed({ modelId, text: slice });
-      const vecs = Array.isArray(res.embedding[0]) ? res.embedding : [res.embedding];
-      out.push(...vecs);
-      if (onProgress) onProgress(Math.min(i + batch, texts.length), texts.length);
-    }
-    return out;
+    return this._serialize(async () => {
+      const modelId = await this._ensureEmbedUnlocked();
+      const out = [];
+      for (let i = 0; i < texts.length; i += batch) {
+        const slice = texts.slice(i, i + batch);
+        const res = await embed({ modelId, text: slice });
+        const vecs = Array.isArray(res.embedding[0]) ? res.embedding : [res.embedding];
+        for (const v of vecs) out.push(v);
+        if (onProgress) onProgress(Math.min(i + batch, texts.length), texts.length);
+      }
+      return out;
+    });
   }
 
-  // Pre-chunk locally and ingest with chunk:false. The SDK's built-in chunker
-  // (chunk:true) routes through an LLM chunk pass that errors with only the embedder
-  // loaded ("Document content is required"); the shipped example ingests plain strings
-  // with chunk:false, so we match that and own the chunking.
-  async ragIngestDocs(documents, workspace = "me", { wordsPerChunk = 120, overlap = 20 } = {}) {
-    const modelId = await this.ensureEmbed();
-    const chunks = [];
-    for (const doc of documents) for (const c of chunkText(doc, wordsPerChunk, overlap)) chunks.push(c);
-    const clean = chunks.map((c) => c.trim()).filter((c) => c.length > 0);
-    if (!clean.length) return { docs: documents.length, chunks: 0 };
-    await ragIngest({ modelId, workspace, documents: clean, chunk: false });
-    return { docs: documents.length, chunks: clean.length };
-  }
-
-  async ragSearchQuery(query, { workspace = "me", topK = 5 } = {}) {
-    const modelId = await this.ensureEmbed();
-    return ragSearch({ modelId, workspace, query, topK }); // -> { documents: [{content, score}] } or array
-  }
-
-  async ragForget(workspace = "me") {
-    try { await ragDeleteWorkspace({ workspace }); } catch { /* */ }
-    try { await ragCloseWorkspace({ workspace, deleteOnClose: true }); } catch { /* */ }
-  }
 
   // Stream a completion. onToken(text) for content, onThink(text) for thinking deltas.
   // Returns { contentText, thinkingText, stats }.
@@ -184,8 +179,10 @@ export class ModelManager {
   }
 
   async unloadAll() {
-    if (this.llm) { try { await unloadModel({ modelId: this.llm.modelId, clearStorage: false }); } catch { /* */ } this.llm = null; }
-    if (this.emb) { try { await unloadModel({ modelId: this.emb.modelId, clearStorage: false }); } catch { /* */ } this.emb = null; }
+    return this._serialize(async () => {
+      if (this.llm) { try { await unloadModel({ modelId: this.llm.modelId, clearStorage: false }); } catch { /* */ } this.llm = null; }
+      if (this.emb) { try { await unloadModel({ modelId: this.emb.modelId, clearStorage: false }); } catch { /* */ } this.emb = null; }
+    });
   }
 }
 

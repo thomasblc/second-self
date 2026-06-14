@@ -155,6 +155,7 @@ export class ContextIndex {
 
   // Remove a source and ALL its records/vectors (kept perfectly aligned).
   removeSource(id) {
+    if (!id) return false; // a falsy id would otherwise match nothing and pointlessly re-save
     const keepRec = [], keepVec = [];
     for (let i = 0; i < this.records.length; i++) if (this.records[i].sourceId !== id) { keepRec.push(this.records[i]); keepVec.push(this.vectors[i]); }
     this.records = keepRec; this.vectors = keepVec;
@@ -169,7 +170,9 @@ export class ContextIndex {
   async reindexSource(id, embed, onProgress) {
     const src = this.getSource(id);
     if (!src) throw new Error("unknown source");
+    const prevDim = this.dim; // removeSource may zero dim if this is the only source; keep the guard meaningful
     const built = await this._buildFolder({ rootPath: src.path, type: src.type, exts: src.exts }, embed, onProgress);
+    if (prevDim && built.dim !== prevDim) throw new Error(`embedding dim changed (${built.dim} vs ${prevDim}); clear + re-index all sources`);
     this.removeSource(id);
     return this._commit(built, { type: src.type, label: src.label, exts: src.exts });
   }

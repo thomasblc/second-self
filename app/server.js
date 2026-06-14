@@ -30,7 +30,7 @@ import crypto from "node:crypto";
 // too; this raises the bar against network-only local adversaries, not omnipotent ones.)
 const WS_TOKEN = process.env.SECOND_SELF_TOKEN || crypto.randomBytes(24).toString("hex");
 try { fs.mkdirSync(CONFIG_DIR, { recursive: true }); fs.writeFileSync(path.join(CONFIG_DIR, "ws-token"), WS_TOKEN, { mode: 0o600 }); } catch { /* non-fatal */ }
-const SEGMENT_RE = /^[^/\\]+$/; // a single path segment: no separators, used to constrain fs.mkdir names
+const SEGMENT_RE = /^[^/\\\x00-\x1f]+$/; // a single path segment: no separators, no control chars/NUL
 
 const APP_DIR = path.dirname(fileURLToPath(import.meta.url));
 const RECIPE_ROOT = path.resolve(APP_DIR, "..");
@@ -199,7 +199,8 @@ const server = http.createServer((req, res) => {
     if (file === path.join(PUBLIC, "index.html")) {
       // inject the per-boot WS token so the browser UI can authenticate its socket
       const html = fs.readFileSync(file, "utf8").replace("</head>", `<script>window.__SS_TOKEN=${JSON.stringify(WS_TOKEN)};</script></head>`);
-      res.writeHead(200, { "Content-Type": "text/html" }); res.end(html); return;
+      // no-store: the token rotates each boot, so a cached page must never serve a stale one
+      res.writeHead(200, { "Content-Type": "text/html", "Cache-Control": "no-store" }); res.end(html); return;
     }
     res.writeHead(200, { "Content-Type": MIME[path.extname(file)] || "application/octet-stream" });
     fs.createReadStream(file).pipe(res);
@@ -232,15 +233,14 @@ function startVaultWatch() {
 // always send Origin; local CLI tools (our smoke tests) send none and are allowed.
 const wss = new WebSocketServer({
   server,
-  verifyClient: ({ origin, req }) => {
+  verifyClient: ({ req }) => {
+    // Require the per-boot token from EVERY client (browser gets it injected into index.html;
+    // CLI/tests read SECOND_SELF_TOKEN / the token file). No Origin fallback: that previously let
+    // ANY other localhost page/app drive the full API without the token (review P1). Host check
+    // still blocks DNS-rebinding.
     const host = (req.headers.host || "").split(":")[0];
     if (!LOCAL_HOSTS.includes(host)) return false;
-    // a valid per-boot token authenticates any client (browser injects it; CLI reads the token file / SECOND_SELF_TOKEN)
-    try { const t = new URL(req.url, "http://x").searchParams.get("t"); if (t && t === WS_TOKEN) return true; } catch { /* */ }
-    // browser fallback: a same-origin localhost page is allowed (a no-Origin process must present the token)
-    if (!origin) return false;
-    try { const u = new URL(origin); return u.hostname === "localhost" || u.hostname === "127.0.0.1"; }
-    catch { return false; }
+    try { return new URL(req.url, "http://x").searchParams.get("t") === WS_TOKEN; } catch { return false; }
   },
 });
 wss.on("connection", (ws) => {

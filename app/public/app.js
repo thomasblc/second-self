@@ -21,7 +21,12 @@ function connect() {
   const tok = window.__SS_TOKEN ? "?t=" + encodeURIComponent(window.__SS_TOKEN) : "";
   ws = new WebSocket(`ws://${location.host}/${tok}`);
   ws.onopen = () => { statusLine.innerHTML = 'connected <span class="kbd">Cmd K</span>'; };
-  ws.onclose = () => { statusLine.textContent = "disconnected, retrying..."; setTimeout(connect, 1500); };
+  ws.onclose = () => {
+    // reject every in-flight request so spinners never hang on a dropped connection (review P0-3)
+    for (const [, p] of pending) { try { p.reject(new Error("connection closed")); } catch { /* */ } }
+    pending.clear();
+    statusLine.textContent = "disconnected, retrying..."; setTimeout(connect, 1500);
+  };
   ws.onmessage = (e) => {
     const m = JSON.parse(e.data);
     if (m.ok !== undefined && m.id && pending.has(m.id)) {
@@ -372,10 +377,10 @@ async function refreshAdapters() {
   const el = $("adapter-list"), sel = $("chat-adapter");
   if (!d.adapters.length) { el.textContent = "none yet - train one in step 2 above"; sel.innerHTML = `<option value="" disabled>no adapter - train one first</option>`; return; }
   const runnable = (a) => a.baseKey !== "3b"; // BitNet 3B trains, but inference is impractical in this SDK
-  el.innerHTML = d.adapters.map((a) => `<div>&#9679; ${a.file.replace("adapters/", "")} <span style="color:var(--mut)">(${a.baseKey}, ${a.sizeMB} MB${runnable(a) ? "" : " - train-only in this SDK"})</span></div>`).join("");
+  el.innerHTML = d.adapters.map((a) => `<div>&#9679; ${escapeHtml(a.file.replace("adapters/", ""))} <span style="color:var(--mut)">(${escapeHtml(a.baseKey)}, ${a.sizeMB} MB${runnable(a) ? "" : " - train-only in this SDK"})</span></div>`).join("");
   const voice = d.adapters.filter(runnable);
   sel.innerHTML = voice.length
-    ? voice.map((a) => `<option value="${a.file}" data-base="${a.baseKey}">${a.file.replace("adapters/", "")}</option>`).join("")
+    ? voice.map((a) => `<option value="${escapeHtml(a.file)}" data-base="${escapeHtml(a.baseKey)}">${escapeHtml(a.file.replace("adapters/", ""))}</option>`).join("")
     : `<option value="" disabled>no runnable adapter yet - train on Qwen3 1.7B</option>`;
 }
 
