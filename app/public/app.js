@@ -62,6 +62,7 @@ function switchPane(name) {
   Object.entries(panes).forEach(([k, id]) => $(id).classList.toggle("active", k === name));
   if (name === "graph") { ensureGraph(); sizeGraph(); }
   if (name === "models") ensureModels();
+  if (name === "vault" && isNarrow()) vaultPaneEl.classList.toggle("tree-open", !current); // mobile: show files if none open
 }
 document.querySelectorAll(".rail-btn[data-pane]").forEach((b) => b.onclick = () => switchPane(b.dataset.pane));
 
@@ -152,6 +153,7 @@ async function openNote(path) {
   setEditMode(false); // open in read mode; the Edit button reveals the editor
   renderTree();
   if (!$("vault-pane").classList.contains("active")) switchPane("vault");
+  if (isNarrow()) $("vault-pane").classList.remove("tree-open"); // mobile: reveal the editor
 }
 function confirmDiscard() {
   if (!dirty) return true;
@@ -187,6 +189,12 @@ function setEditMode(on) {
   if (on) setTimeout(() => editor.focus(), 0);
 }
 $("btn-edit-toggle").onclick = () => setEditMode(!editorWrap.classList.contains("mode-edit"));
+
+// mobile: the file tree is a slide-over; a hamburger opens it, opening a note closes it
+const vaultPaneEl = $("vault-pane");
+$("btn-tree").onclick = () => vaultPaneEl.classList.toggle("tree-open");
+$("tree-scrim").onclick = () => vaultPaneEl.classList.remove("tree-open");
+const isNarrow = () => window.matchMedia && matchMedia("(max-width: 760px)").matches;
 
 async function saveNote(auto) {
   if (!current || !dirty) return;

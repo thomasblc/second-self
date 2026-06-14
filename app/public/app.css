@@ -321,13 +321,36 @@ select, .num { background: var(--bg); border: 1px solid var(--line); color: var(
 #fx { position: fixed; inset: 0; pointer-events: none; z-index: 80; display: none; }
 
 /* ===== responsive: keep usable on a narrow window ===== */
+#btn-tree { display: none; }           /* hamburger to open the file tree: mobile only */
+#tree-scrim { display: none; }
 @media (max-width: 880px) {
   #vault-tree { width: 210px; }
   #editor-wrap.mode-edit #preview { display: none; }  /* in edit mode, give the textarea full width */
   #editor-wrap.mode-edit #editor { border-right: 0; }
   .feature-grid { grid-template-columns: 1fr; }
 }
-@media (max-width: 640px) {
-  #vault-tree { width: 160px; }
+/* mobile: collapse the 3-pane layout. the file tree becomes a slide-over so the editor
+   (and graph/chat) get the full width; a hamburger in the editor bar opens it. */
+@media (max-width: 760px) {
+  #vault-pane { position: relative; }
+  #vault-tree { position: absolute; left: 0; top: 0; bottom: 0; width: 86%; max-width: 320px; z-index: 25;
+    transform: translateX(-105%); transition: transform .2s ease; box-shadow: var(--shadow); }
+  #vault-pane.tree-open #vault-tree { transform: none; }
+  #tree-scrim { display: block; position: absolute; inset: 0; background: rgba(0,0,0,.45); z-index: 24; opacity: 0; pointer-events: none; transition: opacity .2s; }
+  #vault-pane.tree-open #tree-scrim { opacity: 1; pointer-events: auto; }
+  #editor-wrap { width: 100%; }
+  #btn-tree { display: grid; place-items: center; }
+  #preview { padding: 14px 16px; }
+  .demo-banner { flex-direction: column; align-items: flex-start; }
+  .demo-banner .btn { margin-left: 0; }
+  /* settings + picker modals: stack the tab rail above the content, full-bleed */
+  .modal { width: 96vw; max-height: 92vh; }
+  .modal-body { flex-direction: column; }
+  .settings-tabs { flex-direction: row; overflow-x: auto; border-right: 0; border-bottom: 1px solid var(--line); min-width: 0; padding: 8px; }
+  .stab { white-space: nowrap; }
+  .set-row { flex-direction: column; align-items: flex-start; gap: 8px; }
+  .set-row .btn { align-self: flex-start; }
+  #train-drawer { width: 100%; max-width: 100%; }
   .chat-bar { gap: 8px; }
+  .popover { width: 92vw; max-width: 320px; }
 }
