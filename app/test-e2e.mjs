@@ -138,6 +138,21 @@ async function main() {
     // download an already-cached model -> exercises the op without a big fetch
     const dl = await req("model.download", { name: "EMBEDDINGGEMMA_300M_Q4_0" });
     ok(dl.cached, "model.download completes (embedder, cached)");
+
+    section("AGENT (vault tools)");
+    const ag = await req("agent.chat", { message: "Which note is about machine learning? Use your tools, then name the note path.", baseKey: "1.7b", permission: "read" });
+    ok(ag.contentText && ag.contentText.length > 0, "agent returns an answer");
+    ok((ag.actions || []).some((a) => a.tool === "search" || a.tool === "read" || a.tool === "list"), `agent used vault tools (${(ag.actions || []).map((a) => a.tool).join(",")})`);
+
+    section("REMOTE provider (host side)");
+    const prov = await req("provider.start");
+    ok(/^[0-9a-f]{64}$/i.test(prov.publicKey || ""), `startQVACProvider returns a 64-hex pairing key`);
+    await req("provider.stop");
+    ok(true, "provider stopped");
+    // connecting to a non-existent remote must fail honestly (no silent local fallback)
+    let remoteThrew = false;
+    try { await req("remote.connect", { providerPublicKey: "0".repeat(64) }); } catch { remoteThrew = true; }
+    ok(remoteThrew, "remote.connect to an unreachable peer fails (no false success)");
   }
 
   if (WITH_TRAIN) {

@@ -69,7 +69,9 @@ export class ModelManager {
         if (lora) modelConfig.lora = lora;
         if (tools) { modelConfig.tools = true; modelConfig.toolsMode = "dynamic"; }
         const opts = { modelSrc: src, modelType: "llm", modelConfig };
-        if (remote) opts.delegate = { providerPublicKey: remote, fallbackToLocal: true };
+        // fallbackToLocal:false so a connected-but-unreachable remote errors honestly
+        // (instead of silently running local and pretending it is remote).
+        if (remote) opts.delegate = { providerPublicKey: remote, fallbackToLocal: false };
         const modelId = await loadModel(opts);
         this.llm = { modelId, baseKey, lora: lora || null, tools: !!tools, remote: remote || null };
       }
