@@ -90,6 +90,25 @@ mark the vault source stale (or auto-reindex) so Memory + citations track the ac
 + a 4B trainable base). README is current; SPEC should get a "superseded - see README" banner + the
 Memory/`me`-workspace and base-picker lines corrected.
 
-**Next connectors (Phase B+):** PDF/docx (needs a parser dep, breaks the zero-dep rule - decide), then
-calendar/contacts/browser-history (SQLite/ICS/vCard), then mail/messages/photos behind explicit consent
-("only the local model reads this"; Thomas: OK for Messages if the user authorizes).
+## 6. macOS connectors (Phase B) - SHIPPED + deferred coverage notes
+
+Shipped: Calendar (.ics folder), Mail (.emlx folder), Contacts (AddressBook abcddb), Browser history
+(Chromium-family SQLite; Safari path-ready), Messages (chat.db + attributedBody decode). All read-only,
+on-device, copy-to-tmp for SQLite (dodges the live lock; EPERM on copy -> Full Disk Access prompt), epoch
+math done in SQL (no BigInt overflow), build-then-swap + stable-id reindex + opt-in auto-sync. "Connect
+your Mac" button row in Settings > Memory & Sync. Triple-reviewed: security clean, no P0/P1.
+
+**Deferred coverage notes (quality, not correctness; from the connector review):**
+- Messages with an ATTACHMENT whose `text` is null: the attributedBody's first `NSString` marker is often
+  the U+FFFC object-replacement placeholder, so the decoder returns "" and that message is skipped. Read
+  the next marker (the real caption) to cover attachment messages. (`os-stores.js decodeAttributedBody`)
+- Multipart-MIME `.emlx` bodies leak boundary markers (`--BOUND Content-Type: ...`) into the snippet
+  instead of extracting the `text/plain` part. (`context.js normalizeEmlx`)
+- `decodeAttributedBody` handles 1-byte / 0x81 / 0x82 length prefixes; the 0x83 (4-byte, strings >= 64KB)
+  prefix is unhandled - not realistic for a single message, left as-is.
+- Privacy copy: `context.search` IS tunnel-allowed, so a paired satellite device can query the master's
+  indexed Messages/Mail (by design, gated by the pairing-key bearer capability). Worth a one-line note in
+  the Devices/privacy UI: "a device you pair can query your indexed sources."
+
+**Next connectors (Phase C+):** PDF/docx (needs a parser dep, breaks the zero-dep rule - decide), Photos
+(captions/EXIF + on-device OCR), Notes.app (NoteStore SQLite + gzipped protobuf bodies).
