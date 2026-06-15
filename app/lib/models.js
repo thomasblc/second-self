@@ -121,6 +121,16 @@ export class ModelManager {
           history.push({ role: "tool", content: String(res).slice(0, 4000) });
         }
       }
+      // Dead-end guard: if we burned every hop still calling tools (small models can loop on
+      // near-identical searches), force ONE final answer with NO tools so the user never gets an
+      // empty reply. Fresh kvCache: the tool set changed, and reusing the loop's cache could poison it.
+      if (!finalText) {
+        history.push({ role: "system", content: "Stop using tools now. Answer the owner directly using what you already found above. If the notes did not contain the answer, say so briefly." });
+        const wrap = completion({ modelId, history, kvCache: `${kvCache}-final`, stream: true });
+        for await (const ev of wrap.events) { if (ev.type === "contentDelta") { finalText += ev.text; if (onToken) onToken(ev.text); } }
+        const wf = await wrap.final; finalText = wf.contentText || finalText;
+        history.push({ role: "assistant", content: finalText });
+      }
       return { contentText: finalText, history };
     });
   }

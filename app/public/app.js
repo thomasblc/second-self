@@ -160,9 +160,26 @@ async function openNote(path) {
   if (!$("vault-pane").classList.contains("active")) switchPane("vault");
   if (isNarrow()) $("vault-pane").classList.remove("tree-open"); // mobile: reveal the editor
 }
-function confirmDiscard() {
+// Custom in-app confirm (replaces the browser confirm() chrome). Returns a Promise<boolean>.
+let _confirmResolve = null;
+function confirmModal(message, { title = "Confirm", okLabel = "OK", danger = false } = {}) {
+  return new Promise((resolve) => {
+    _confirmResolve = resolve;
+    $("confirm-title").textContent = title;
+    $("confirm-msg").textContent = message;
+    const ok = $("confirm-ok"); ok.textContent = okLabel; ok.classList.toggle("danger", !!danger);
+    $("confirm").classList.add("show");
+    ok.focus();
+  });
+}
+function closeConfirm(val) { $("confirm").classList.remove("show"); const r = _confirmResolve; _confirmResolve = null; if (r) r(val); }
+$("confirm-ok").onclick = () => closeConfirm(true);
+$("confirm-cancel").onclick = () => closeConfirm(false);
+$("confirm").addEventListener("click", (e) => { if (e.target === $("confirm")) closeConfirm(false); });
+
+async function confirmDiscard() {
   if (!dirty) return true;
-  if (confirm("Discard unsaved changes?")) { dirty = false; return true; } // clear dirty so a pending autosave can't fire post-switch
+  if (await confirmModal("You have unsaved changes in this note. Discard them?", { title: "Discard changes?", okLabel: "Discard", danger: true })) { dirty = false; return true; } // clear dirty so a pending autosave can't fire post-switch
   return false;
 }
 function renderPreview() {
@@ -216,7 +233,8 @@ async function newNote() {
   catch (e) { toast(e.message, "bad"); }
 }
 $("btn-del").onclick = async () => {
-  if (!current || !confirm("Delete " + current + "?")) return;
+  if (!current) return;
+  if (!await confirmModal(`Delete "${current}"? This removes the file from your vault.`, { title: "Delete note?", okLabel: "Delete", danger: true })) return;
   await request("vault.delete", { path: current });
   const gone = current; current = null; dirty = false; editor.value = ""; preview.innerHTML = ""; noteTitle.textContent = "No note open";
   graphData = null; await loadFiles(); toast("Deleted " + gone);
@@ -267,7 +285,24 @@ $("search").addEventListener("input", (e) => {
 const canvas = $("graph-canvas");
 const graph = new Graph(canvas); window._graph = graph;
 applyTheme(localStorage.getItem("ss-theme") || "dark"); // set accent now that graph exists
-graph.onClick = (n, e) => { if (e && e.shiftKey) toggleSelect(n.id); else openNote(n.path); };
+// Plain click previews the note in a side panel (stay on the graph); shift-click selects for training.
+graph.onClick = (n, e) => { if (e && e.shiftKey) toggleSelect(n.id); else showGraphNode(n.path); };
+const graphSide = $("graph-side");
+let graphSidePath = null;
+async function showGraphNode(path) {
+  if (!path) return; // tag/cluster nodes have no note to preview
+  graphSidePath = path;
+  $("graph-side-title").textContent = path.split("/").pop().replace(/\.md$/i, "");
+  $("graph-side-title").title = path;
+  graphSide.classList.add("show");
+  const body = $("graph-side-body");
+  body.innerHTML = `<span style="color:var(--mut)">Loading...</span>`;
+  try { const r = await request("vault.read", { path }); body.innerHTML = renderMarkdown(r.content || "*(empty note)*"); }
+  catch { body.innerHTML = `<span style="color:var(--mut)">Could not read this note.</span>`; }
+}
+function closeGraphSide() { graphSide.classList.remove("show"); graphSidePath = null; }
+$("graph-side-close").onclick = closeGraphSide;
+$("graph-side-open").onclick = () => { if (graphSidePath) openNote(graphSidePath); };
 function sizeGraph() { const r = $("graph-left").getBoundingClientRect(); graph.resize(r.width, r.height); graph.reheat(); }
 window.addEventListener("resize", () => { if ($("graph-pane").classList.contains("active")) sizeGraph(); });
 async function ensureGraph() {
@@ -398,6 +433,7 @@ const tgSync = $("tg-autosync"), syncInterval = $("autosync-interval");
 async function loadRetrainCfg() {
   try {
     const c = await request("config.get");
+    if (c.agentName) { agentName = c.agentName; if (agentNameInput) agentNameInput.value = c.agentName; }
     tgAuto.checked = !!c.autoRetrain.enabled; autoInterval.value = String(c.autoRetrain.intervalDays || 7); $("autoretrain-row").style.display = tgAuto.checked ? "flex" : "none";
     if (tgSync) { tgSync.checked = !!c.autoSync.enabled; syncInterval.value = String(c.autoSync.intervalHours || 24); syncInterval.style.display = tgSync.checked ? "" : "none"; }
   } catch { /* */ }
@@ -421,6 +457,18 @@ on("autoRetrain.error", (m) => toast("Auto-retrain error: " + (m.message || ""),
 // ============================================================ chat
 const messages = $("messages"), chatText = $("chat-text"), tgVoice = $("tg-voice"), tgMemory = $("tg-memory"), chatAdapter = $("chat-adapter"), chatBase = $("chat-base");
 let history = [], curAssistantEl = null, chatBusy = false;
+let agentName = "Second Self"; // the assistant's display name (config.agentName); used for the chat label
+// rename the assistant: persist server-side (flows into the system prompt) + relabel existing messages
+const agentNameInput = $("agent-name");
+async function saveAgentName() {
+  const n = (agentNameInput.value || "").trim().slice(0, 40);
+  try { const c = await request("config.set", { agentName: n }); agentName = c.agentName; agentNameInput.value = c.agentName;
+    messages.querySelectorAll(".msg.assistant .who").forEach((w) => w.textContent = agentName);
+    toast(`Assistant renamed to "${agentName}"`);
+  } catch (e) { toast(e.message, "bad"); }
+}
+$("btn-rename").onclick = saveAgentName;
+agentNameInput.onkeydown = (e) => { if (e.key === "Enter") { e.preventDefault(); saveAgentName(); agentNameInput.blur(); } };
 tgVoice.onchange = () => {
   const hasAdapter = [...chatAdapter.options].some((o) => o.value);
   if (tgVoice.checked && !hasAdapter) { tgVoice.checked = false; chatAdapter.style.display = "none"; toast("Train your voice first (click 'Train your voice'), then turn on Voice.", "warn"); openTrainDrawer(); return; }
@@ -503,7 +551,7 @@ on("chat.warn", (m) => toast(m.message, "warn"));
 function addMsg(role, text) {
   if (messages.querySelector(".empty")) messages.innerHTML = "";
   const el = document.createElement("div"); el.className = "msg " + role; el._raw = text || "";
-  el.innerHTML = (role === "assistant" ? `<div class="who">second self</div>` : "") + `<div class="body">${renderMarkdown(text || "")}</div>`;
+  el.innerHTML = (role === "assistant" ? `<div class="who">${escapeHtml(agentName)}</div>` : "") + `<div class="body">${renderMarkdown(text || "")}</div>`;
   messages.appendChild(el); messages.scrollTop = messages.scrollHeight; return el;
 }
 // citations come from the RETRIEVAL layer (reliable), never parsed from the model's text.
@@ -602,7 +650,7 @@ function renderCardStatus(card, m) {
   if (m.cached) {
     st.innerHTML = `<span class="mc-cached">&#10003; Downloaded</span>`;
     const del = document.createElement("button"); del.className = "btn danger"; del.textContent = "Delete"; del.style.marginTop = "4px";
-    del.onclick = async () => { if (!confirm(`Delete ${m.label} from your machine?`)) return; try { await request("model.delete", { name: m.name }); m.cached = false; renderCardStatus(card, m); toast(`Deleted ${m.label}`); } catch (e) { toast(e.message, "bad"); } };
+    del.onclick = async () => { if (!await confirmModal(`Delete ${m.label} from your machine? You can re-download it later.`, { title: "Delete model?", okLabel: "Delete", danger: true })) return; try { await request("model.delete", { name: m.name }); m.cached = false; renderCardStatus(card, m); toast(`Deleted ${m.label}`); } catch (e) { toast(e.message, "bad"); } };
     st.appendChild(del);
   } else {
     const dl = document.createElement("button"); dl.className = "btn primary"; dl.textContent = `Download ${m.sizeGB} GB`;
@@ -885,12 +933,12 @@ on("remote.lost", () => {
 $("remote-state").onclick = async () => {
   let m = {}; try { m = await request("master.status"); } catch { /* */ }
   if (m.connected) {
-    if (!confirm("Disconnect from the master machine? You'll go back to this device's own vault.")) return;
+    if (!await confirmModal("Disconnect from the master machine? You'll go back to this device's own vault.", { title: "Disconnect?", okLabel: "Disconnect" })) return;
     try { await request("master.disconnect"); resetVaultState(); await loadFiles(); await updateVaultChip(); updateRemoteIndicator(); toast("Disconnected. Back on this machine."); }
     catch (e) { toast(e.message, "bad"); }
     return;
   }
-  if (!confirm("Disconnect from the remote machine? Chat goes back to local.")) return;
+  if (!await confirmModal("Disconnect from the remote machine? Chat goes back to local.", { title: "Disconnect?", okLabel: "Disconnect" })) return;
   try { await request("remote.disconnect"); updateRemoteIndicator(); toast("Disconnected. Running locally."); } catch (e) { toast(e.message, "bad"); }
 };
 async function shareGpu() {
@@ -967,6 +1015,8 @@ document.addEventListener("keydown", (e) => {
     if (settings.classList.contains("show")) closeSettings();
     if (picker.classList.contains("show")) finishPick(null);
     if ($("fda").classList.contains("show")) closeFda();
+    if ($("confirm").classList.contains("show")) closeConfirm(false);
+    if (graphSide.classList.contains("show")) closeGraphSide();
     vaultPop.classList.remove("show");
     closeTrainDrawer();
     if ($("onboard").classList.contains("show")) endOnboarding();

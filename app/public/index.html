@@ -82,28 +82,60 @@
           <span style="border-left:1px solid var(--line);padding-left:10px">&#9711; selected = trains your voice (shift-click)</span>
         </div>
       </div>
+      <!-- Click a node to preview its note here, without leaving the graph -->
+      <aside id="graph-side" aria-label="Note preview">
+        <div class="gs-head">
+          <span class="gs-title" id="graph-side-title"></span>
+          <button class="btn" id="graph-side-open" title="Open this note in the editor">Open</button>
+          <button class="btn" id="graph-side-close" aria-label="Close preview">&times;</button>
+        </div>
+        <div class="gs-body" id="graph-side-body"></div>
+      </aside>
     </section>
 
     <!-- CHAT & TRAIN -->
     <section class="pane" id="chat-pane">
-      <div class="chat-bar">
-        <label class="toggle" title="Which base model answers">model
-          <select id="chat-base"><option value="1.7b">Qwen3 1.7B</option><option value="1b">Llama 1B</option><option value="8b">Qwen3 8B</option><option value="600m">Qwen3 0.6B</option></select>
-        </label>
-        <label class="toggle" title="Reply in your writing voice, using a LoRA trained on your notes"><input type="checkbox" id="tg-voice"> Voice (your LoRA)</label>
-        <select id="chat-adapter" class="num" style="display:none"></select>
-        <label class="toggle" title="Ground answers in facts retrieved from your notes"><input type="checkbox" id="tg-memory"> Memory (your notes)</label>
-        <label class="toggle" title="Let the model use tools to find, read (and optionally edit) your notes"><input type="checkbox" id="tg-agent"> Agent</label>
-        <select id="agent-perm" class="num" style="display:none"><option value="read">read-only</option><option value="edit">read + edit</option></select>
-        <button class="btn" id="btn-ingest" title="Embed your notes on-device so Memory can retrieve real facts from them">Index for memory</button>
-        <button class="btn" id="btn-train-open" title="Train a model on your own notes">&#129516; Train your voice</button>
-        <span id="chat-model-state" style="margin-left:auto;color:var(--mut);font-size:11px"></span>
+      <div class="chat-main">
+        <div id="messages"><div class="empty"><div style="font-size:34px">&#128172;</div>Talk to the base model now. Turn on <b>Your voice</b>, <b>Your memory</b>, and <b>Agent</b> in the panel on the right to make it answer like you and know what you know. Everything runs on this machine.</div></div>
+        <div class="chat-input">
+          <textarea id="chat-text" placeholder="Ask anything... (Enter to send)"></textarea>
+          <button class="btn primary" id="btn-send">Send</button>
+        </div>
       </div>
-      <div id="messages"><div class="empty"><div style="font-size:34px">&#128172;</div>Talk to the base model now. Train a LoRA to flip on <b>your voice</b>, index your vault to give it <b>your memory</b>. Toggle them above to feel the difference. Everything runs on this machine.</div></div>
-      <div class="chat-input">
-        <textarea id="chat-text" placeholder="Ask anything... (Enter to send)"></textarea>
-        <button class="btn primary" id="btn-send">Send</button>
-      </div>
+
+      <!-- Chat setup: identity + which on-device capabilities are active for each message -->
+      <aside class="chat-side" aria-label="Chat setup">
+        <div class="cs-block">
+          <label class="cs-label" for="agent-name" title="What this assistant calls itself. It uses this name when it introduces itself.">Assistant name</label>
+          <div class="cs-name-row">
+            <input id="agent-name" type="text" maxlength="40" placeholder="Second Self" autocomplete="off">
+            <button class="btn" id="btn-rename" title="Save the name">Save</button>
+          </div>
+        </div>
+        <div class="cs-block">
+          <label class="cs-label" for="chat-base" title="Which on-device model generates the answers. Bigger = smarter but slower.">Model</label>
+          <select id="chat-base" class="cs-select"><option value="1.7b">Qwen3 1.7B</option><option value="1b">Llama 1B</option><option value="8b">Qwen3 8B</option><option value="600m">Qwen3 0.6B</option></select>
+        </div>
+        <div class="cs-cap">
+          <label class="cs-switch" for="tg-voice"><input type="checkbox" id="tg-voice"><span>Your voice</span></label>
+          <div class="cs-desc" title="Uses a LoRA adapter fine-tuned on your own notes, so replies match your tone, length and phrasing.">Reply in your own writing style (needs a trained adapter).</div>
+          <select id="chat-adapter" class="cs-select" style="display:none"></select>
+        </div>
+        <div class="cs-cap">
+          <label class="cs-switch" for="tg-memory"><input type="checkbox" id="tg-memory"><span>Your memory</span></label>
+          <div class="cs-desc" title="Retrieves real excerpts from everything you've indexed (vault + connected Mac sources) and answers with citations. Read-only.">Recall facts from your indexed notes &amp; data, with citations.</div>
+        </div>
+        <div class="cs-cap">
+          <label class="cs-switch" for="tg-agent"><input type="checkbox" id="tg-agent"><span>Agent</span></label>
+          <div class="cs-desc" title="The assistant actively uses tools to search and read (and optionally edit) your vault while answering.">Let it actively search &amp; read your vault while answering.</div>
+          <select id="agent-perm" class="cs-select" style="display:none"><option value="read">read-only</option><option value="edit">read + edit</option></select>
+        </div>
+        <div class="cs-actions">
+          <button class="btn" id="btn-ingest" title="Embed your notes on-device so Your memory can retrieve real facts from them">Index for memory</button>
+          <button class="btn" id="btn-train-open" title="Fine-tune a model on your own notes">&#129516; Train your voice</button>
+        </div>
+        <div id="chat-model-state" class="cs-state"></div>
+      </aside>
 
       <!-- Training drawer (slides in from the right inside the Chat tab) -->
       <aside id="train-drawer" aria-label="Train your voice">
@@ -316,6 +348,18 @@
     <button class="btn" id="picker-newfolder">&#10133; New folder</button>
     <span style="flex:1"></span>
     <button class="btn primary" id="picker-use">Use this folder</button>
+  </div>
+</div></div>
+
+<!-- Generic confirm dialog (replaces the browser's confirm()) -->
+<div class="overlay" id="confirm"><div class="modal" style="width:min(420px,94vw)">
+  <div class="modal-head"><h2 id="confirm-title">Confirm</h2></div>
+  <div style="padding:18px 20px; line-height:1.6">
+    <p id="confirm-msg" style="margin:0 0 18px; color:var(--fg)"></p>
+    <div class="set-row" style="border:0; padding:0; gap:10px; justify-content:flex-end">
+      <button class="btn" id="confirm-cancel">Cancel</button>
+      <button class="btn primary" id="confirm-ok">OK</button>
+    </div>
   </div>
 </div></div>
 

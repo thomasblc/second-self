@@ -48,6 +48,14 @@ const isDir = (p) => { try { return !!p && fs.statSync(p).isDirectory(); } catch
 // so a preset whose directory itself is permission-denied still routes to the grant-access flow.
 const dirStatus = (p) => { try { return fs.statSync(p).isDirectory() ? "dir" : "notdir"; } catch (e) { return (e && (e.code === "EPERM" || e.code === "EACCES")) ? "blocked" : "absent"; } };
 
+// Identity + environment preamble for every chat. Gives the model a stable self (so a base model
+// doesn't free-associate "I'm ChatGPT/Qwen") and awareness of what it can do here, so it can tell
+// the user how to unlock its memory/vault access instead of flatly denying it.
+function identityPrompt() {
+  const name = getConfig().agentName || "Second Self";
+  return `You are ${name}, a private AI assistant that runs 100% on the owner's own computer through the QVAC on-device runtime. No data ever leaves this machine; there is no cloud. You are not ChatGPT, Gemini, Claude, or any hosted assistant - your identity is ${name}, running locally on top of an open model. Speak in the owner's language. The person you are talking to is the owner of this machine.`;
+}
+
 // Vault precedence: $SECOND_SELF_VAULT (explicit override) > last vault from config >
 // bundled demo > this repo's docs/ (dev fallback). The chosen one is remembered in config.
 const cfg = getConfig();
@@ -346,11 +354,12 @@ async function handle(type, msg, { reply, fail, push }) {
       vault.setRoot(dir); rememberVault(dir, msg.name); invalidateCaches(); startVaultWatch();
       return reply({ root: vault.root, isDemo: isDemoVault() });
     }
-    case "config.get": { const c = getConfig(); return reply({ autoRetrain: c.autoRetrain, autoSync: c.autoSync, ui: c.ui }); }
+    case "config.get": { const c = getConfig(); return reply({ agentName: c.agentName, autoRetrain: c.autoRetrain, autoSync: c.autoSync, ui: c.ui }); }
     case "config.set": {
       // only touch the section(s) the client actually sent (autoRetrain and autoSync are
       // independent toggles in different panels; sending one must not reset the other).
       const cur = getConfig(); const patch = {};
+      if (typeof msg.agentName === "string") { const n = msg.agentName.trim().slice(0, 40); patch.agentName = n || "Second Self"; }
       if (msg.autoRetrain) {
         const prev = cur.autoRetrain, inA = msg.autoRetrain;
         const enabled = !!inA.enabled;
@@ -372,7 +381,7 @@ async function handle(type, msg, { reply, fail, push }) {
       // start an overdue run while another is in flight; the syncBusy guard catches it, but don't poke it)
       if (msg.autoRetrain) scheduleAutoRetrain();
       if (msg.autoSync) scheduleAutoSync();
-      return reply({ autoRetrain: c.autoRetrain, autoSync: c.autoSync, ui: c.ui });
+      return reply({ agentName: c.agentName, autoRetrain: c.autoRetrain, autoSync: c.autoSync, ui: c.ui });
     }
     case "vault.list": return reply({ root: vault.root, files: vault.list() });
     case "vault.read": return reply({ path: msg.path, content: vault.read(msg.path) });
@@ -593,8 +602,9 @@ async function handle(type, msg, { reply, fail, push }) {
         }
         return "unknown tool";
       };
-      const sys = `You are the owner's second self with access to their note vault. Use the tools to FIND and READ their notes to answer well, citing the note paths you used. `
-        + (permission === "edit" ? "You may also create or edit notes with write_note when the owner asks." : "You can read notes but you may NOT edit them (the vault is read-only).");
+      const sys = identityPrompt()
+        + ` Agent mode is ON: you have LIVE access to the owner's note vault through tools. Use search_vault / read_note / list_notes to FIND and READ their actual notes before answering, and cite the note paths you used. Do not claim you lack access - you have it. `
+        + (permission === "edit" ? "You may also create or edit notes with write_note when the owner asks." : "You can read notes but you may NOT edit them (the vault is read-only this session).");
       const hist = [{ role: "system", content: sys }, ...history, { role: "user", content: message }];
       push({ type: "chat.start" });
       const { contentText } = await mm.agentChat(hist, { baseKey, tools, executeTool,
@@ -623,8 +633,16 @@ async function handle(type, msg, { reply, fail, push }) {
           if (!hits.length) push({ type: "chat.warn", message: "no indexed context yet - index a source for memory" });
         } catch (e) { push({ type: "chat.warn", message: "retrieval failed: " + e.message }); }
       }
-      const sys = (voice ? "You are the owner's second self: reply in their writing voice." : "You are a helpful assistant.")
-        + (grounding ? "\nAnswer using only these excerpts; if they don't cover it, say so. Refer to sources by their [n].\n\n" + grounding : "");
+      // identity + environment + capability-awareness, then mode-specific guidance.
+      let sys = identityPrompt() + " ";
+      sys += voice ? "You have been fine-tuned on the owner's own writing - reply in their voice (same tone, length, phrasing). " : "";
+      if (memory && grounding) {
+        sys += "Memory is ON: below are real excerpts retrieved from the owner's indexed notes and data. Answer using these excerpts and cite them by their [n]; if they don't cover the question, say so.\n\n" + grounding;
+      } else if (memory) {
+        sys += "Memory is ON but nothing relevant was found in the owner's index for this question (their index may be empty or unrelated). Say what you can, and suggest they index more sources under Settings > Memory.";
+      } else {
+        sys += "Right now Memory and Agent mode are OFF, so you cannot see the owner's personal notes, calendar, mail, contacts, browser history, or messages. If they ask about their own data, explain that you CAN access it once they turn on Memory (to recall indexed facts) or Agent mode (to actively search and read their vault) from the controls in this Chat tab.";
+      }
       const fullHistory = [{ role: "system", content: sys }, ...history, { role: "user", content: message }];
       push({ type: "chat.start", hits });
       const { contentText, stats } = await mm.chat(fullHistory, {

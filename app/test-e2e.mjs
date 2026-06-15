@@ -130,6 +130,10 @@ async function main() {
   ok(cfg.autoRetrain.enabled && cfg.autoRetrain.intervalDays >= 1 && cfg.autoRetrain.baseKey === "1.7b", "config.set sanitizes interval + baseKey");
   await req("config.set", { autoRetrain: { enabled: false } }); // never leave a scheduled retrain running
   ok((await req("config.get")).autoRetrain.enabled === false, "config.get reflects the disabled state");
+  // agent name: persists, trims/caps, and an empty name falls back to the default
+  const named = await req("config.set", { agentName: "  Atlas  " });
+  ok(named.agentName === "Atlas" && (await req("config.get")).agentName === "Atlas", "config.set agentName trims + persists");
+  ok((await req("config.set", { agentName: "" })).agentName === "Second Self", "empty agentName falls back to default");
   const v2 = fs.mkdtempSync(path.join(os.tmpdir(), "ss-e2e-v2-"));
   fs.writeFileSync(path.join(v2, "only.md"), "# Only\n\njust one note here");
   const sw = await req("vault.switchVault", { path: v2 });

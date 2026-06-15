@@ -13,6 +13,7 @@ const FILE = path.join(CONFIG_DIR, "config.json");
 const DEFAULTS = {
   vaults: [],                 // [{ path, name }] known vaults, most-recent first
   current: null,              // absolute path of the active vault
+  agentName: "Second Self",   // what the assistant calls itself (user-renamable); flows into the system prompt + chat label
   autoRetrain: { enabled: false, intervalDays: 7, baseKey: "1.7b", lastRun: null },
   autoSync: { enabled: false, intervalHours: 24, lastRun: null }, // re-index context sources on a schedule (near-live)
   ui: {},                     // misc client prefs we want to persist server-side
@@ -26,6 +27,7 @@ function read() {
       ...DEFAULTS, ...raw,
       vaults: Array.isArray(raw.vaults) ? raw.vaults.filter((v) => v && typeof v.path === "string") : [],
       current: typeof raw.current === "string" ? raw.current : null,
+      agentName: (typeof raw.agentName === "string" && raw.agentName.trim()) ? raw.agentName.trim().slice(0, 40) : DEFAULTS.agentName,
       ui: raw.ui && typeof raw.ui === "object" ? raw.ui : {},
       autoRetrain: { ...DEFAULTS.autoRetrain, ...(raw.autoRetrain && typeof raw.autoRetrain === "object" ? raw.autoRetrain : {}) },
       autoSync: { ...DEFAULTS.autoSync, ...(raw.autoSync && typeof raw.autoSync === "object" ? raw.autoSync : {}) },
