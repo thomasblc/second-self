@@ -247,6 +247,16 @@
           <div class="set-info"><b>Add a folder as a source</b><span>Point the AI at a folder of documents (markdown, text, code). Read-only, indexed locally.</span></div>
           <button class="btn primary" id="set-addsource">Add folder...</button>
         </div>
+        <div class="set-row">
+          <div class="set-info"><b>Add your Apple Calendar</b><span>Index your events ("when am I seeing Marco?"). macOS will ask for Full Disk Access the first time. Read-only, on-device.</span></div>
+          <button class="btn" id="set-addcal">&#128197; Add Calendar</button>
+        </div>
+        <div class="set-row">
+          <div class="set-info"><b>Keep sources fresh</b><span>Re-index your sources automatically so memory stays near-live (good for the calendar). Runs in the background.</span></div>
+          <label class="toggle" style="color:var(--fg)"><input type="checkbox" id="tg-autosync"> auto
+            <select id="autosync-interval" class="num" style="display:none"><option value="6">6h</option><option value="12">12h</option><option value="24" selected>daily</option></select>
+          </label>
+        </div>
         <div class="set-row col">
           <div class="set-info"><b>Vault sync</b><span>Your notes are plain <code>.md</code> files on disk. If your vault folder lives in iCloud, Dropbox, or a git repo, those tools sync it across devices, and Second Self picks up external edits automatically (no save button needed). There is no Second Self cloud: nothing is uploaded.</span></div>
         </div>
@@ -300,6 +310,23 @@
     <button class="btn" id="picker-newfolder">&#10133; New folder</button>
     <span style="flex:1"></span>
     <button class="btn primary" id="picker-use">Use this folder</button>
+  </div>
+</div></div>
+
+<!-- Full Disk Access permission flow (macOS) -->
+<div class="overlay" id="fda"><div class="modal" style="width:min(520px,94vw)">
+  <div class="modal-head"><h2>Grant access</h2><button class="btn" id="fda-close" aria-label="Cancel">&times;</button></div>
+  <div style="padding:18px 20px; line-height:1.6">
+    <p style="margin:0 0 12px">macOS protects this data, so Second Self needs <b>Full Disk Access</b> to read it on this machine. It stays local: only the on-device model reads it, nothing is uploaded.</p>
+    <ol style="margin:0 0 14px; padding-left:20px; color:var(--mut); font-size:13px; line-height:1.7">
+      <li>Click <b>Open Settings</b> (opens Privacy &amp; Security &rarr; Full Disk Access).</li>
+      <li>Turn on the app running Second Self (<b>Terminal</b>, or the Second Self app).</li>
+      <li>Come back and click <b>Re-index</b>.</li>
+    </ol>
+    <div class="set-row" style="border:0; padding:0; gap:10px">
+      <button class="btn primary" id="fda-open">Open Settings</button>
+      <button class="btn" id="fda-retry">Re-index</button>
+    </div>
   </div>
 </div></div>
 

@@ -14,6 +14,7 @@ const DEFAULTS = {
   vaults: [],                 // [{ path, name }] known vaults, most-recent first
   current: null,              // absolute path of the active vault
   autoRetrain: { enabled: false, intervalDays: 7, baseKey: "1.7b", lastRun: null },
+  autoSync: { enabled: false, intervalHours: 24, lastRun: null }, // re-index context sources on a schedule (near-live)
   ui: {},                     // misc client prefs we want to persist server-side
 };
 
@@ -27,6 +28,7 @@ function read() {
       current: typeof raw.current === "string" ? raw.current : null,
       ui: raw.ui && typeof raw.ui === "object" ? raw.ui : {},
       autoRetrain: { ...DEFAULTS.autoRetrain, ...(raw.autoRetrain && typeof raw.autoRetrain === "object" ? raw.autoRetrain : {}) },
+      autoSync: { ...DEFAULTS.autoSync, ...(raw.autoSync && typeof raw.autoSync === "object" ? raw.autoSync : {}) },
     };
   } catch { return { ...DEFAULTS }; }
 }
@@ -43,7 +45,7 @@ let cache = read();
 export function getConfig() { return cache; }
 
 export function saveConfig(patch) {
-  cache = { ...cache, ...patch, autoRetrain: { ...cache.autoRetrain, ...(patch.autoRetrain || {}) }, ui: { ...cache.ui, ...(patch.ui || {}) } };
+  cache = { ...cache, ...patch, autoRetrain: { ...cache.autoRetrain, ...(patch.autoRetrain || {}) }, autoSync: { ...cache.autoSync, ...(patch.autoSync || {}) }, ui: { ...cache.ui, ...(patch.ui || {}) } };
   write(cache);
   return cache;
 }

@@ -26,7 +26,56 @@ export const TEXT_EXTS = new Set([
   ".js", ".jsx", ".ts", ".tsx", ".py", ".go", ".rs", ".java", ".c", ".h", ".cpp", ".hpp",
   ".cs", ".rb", ".php", ".swift", ".kt", ".sh", ".sql", ".lua", ".r",
   ".json", ".yaml", ".yml", ".toml", ".ini", ".csv", ".tsv", ".html", ".css", ".xml",
+  ".ics", ".vcf", // calendar events + contacts (normalized to readable lines below)
 ]);
+
+// Some macOS data lives in TCC-protected stores (Calendar, Mail, Messages...). Reading them from
+// a plain process needs Full Disk Access; without it readdir throws EPERM. We surface that as a
+// distinct error so the UI can guide the user to grant it (instead of "no files found").
+export const NEEDS_FDA = "FULL_DISK_ACCESS_REQUIRED";
+
+// ---- .ics calendar normalizer: turn raw VEVENT blocks into one readable line per event ----
+function fmtIcsDate(s) {
+  const m = /(\d{4})(\d{2})(\d{2})(?:T(\d{2})(\d{2}))?/.exec(s || "");
+  if (!m) return s || "";
+  return m[4] ? `${m[1]}-${m[2]}-${m[3]} ${m[4]}:${m[5]}` : `${m[1]}-${m[2]}-${m[3]}`;
+}
+export function normalizeIcs(text) {
+  const unfolded = String(text || "").replace(/\r?\n[ \t]/g, ""); // RFC5545 line unfolding
+  const events = []; const re = /BEGIN:VEVENT([\s\S]*?)END:VEVENT/g; let m;
+  const field = (blk, k) => { const r = new RegExp("\\n" + k + "[^:\\n]*:([^\\n]*)").exec("\n" + blk); return r ? r[1].trim() : ""; };
+  while ((m = re.exec(unfolded))) {
+    const blk = m[1];
+    const summary = field(blk, "SUMMARY"), loc = field(blk, "LOCATION");
+    const start = fmtIcsDate(field(blk, "DTSTART"));
+    const desc = field(blk, "DESCRIPTION").replace(/\\n/g, " ").replace(/\\,/g, ",").trim().slice(0, 300);
+    const att = (blk.match(/\nATTENDEE[^:\n]*:(?:mailto:)?([^\n]+)/gi) || []).map((a) => a.split(":").pop().trim()).slice(0, 10).join(", ");
+    if (!summary && !start) continue;
+    let line = `Event: ${summary || "(untitled)"}`;
+    if (start) line += ` | when: ${start}`;
+    if (loc) line += ` | where: ${loc}`;
+    if (att) line += ` | with: ${att}`;
+    if (desc) line += ` | ${desc}`;
+    events.push(line);
+  }
+  return events.join("\n");
+}
+// .vcf contacts -> "Contact: Name | email | phone | org" lines
+export function normalizeVcf(text) {
+  const cards = []; const re = /BEGIN:VCARD([\s\S]*?)END:VCARD/g; let m;
+  const field = (blk, k) => { const r = new RegExp("\\n" + k + "[^:\\n]*:([^\\n]*)").exec("\n" + blk); return r ? r[1].trim() : ""; };
+  while ((m = re.exec(String(text || "")))) {
+    const blk = m[1];
+    const fn = field(blk, "FN"), email = field(blk, "EMAIL"), tel = field(blk, "TEL"), org = field(blk, "ORG").replace(/;/g, " ");
+    if (!fn) continue;
+    let line = `Contact: ${fn}`;
+    if (org) line += ` | ${org}`;
+    if (email) line += ` | ${email}`;
+    if (tel) line += ` | ${tel}`;
+    cards.push(line);
+  }
+  return cards.join("\n");
+}
 const SKIP_DIRS = new Set(["node_modules", ".git", ".obsidian", "dist", "build", ".next", ".cache", "__pycache__", ".venv", "venv"]);
 const MAX_FILE = 2 * 1024 * 1024; // skip files larger than 2 MB (logs/minified blobs)
 const MAX_FILES = 20000;          // cap a runaway folder scan
@@ -91,14 +140,16 @@ export class ContextIndex {
   getSource(id) { return this.sources.find((s) => s.id === id) || null; }
   findByPath(p) { const r = path.resolve(p); return this.sources.find((s) => path.resolve(s.path) === r) || null; }
 
-  // Walk a folder and collect readable text files (bounded). Returns [{ rel, abs, mtime }].
+  // Walk a folder and collect readable text files (bounded). Returns { files:[{rel,abs,mtime}], blocked }.
+  // `blocked` is true if any readdir hit a permission error (TCC) - lets the caller ask for Full Disk Access.
   _walk(rootAbs, exts) {
-    const out = [];
+    const out = []; let blocked = false;
     const allow = exts && exts.size ? exts : TEXT_EXTS;
     const stack = [rootAbs];
     while (stack.length && out.length < MAX_FILES) {
       const dir = stack.pop();
-      let entries; try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { continue; }
+      let entries; try { entries = fs.readdirSync(dir, { withFileTypes: true }); }
+      catch (e) { if (e && (e.code === "EPERM" || e.code === "EACCES")) blocked = true; continue; }
       for (const e of entries) {
         if (e.name.startsWith(".")) continue;
         const abs = path.join(dir, e.name);
@@ -111,7 +162,7 @@ export class ContextIndex {
         if (out.length >= MAX_FILES) break;
       }
     }
-    return out;
+    return { files: out, blocked };
   }
 
   // Build a source's records + vectors WITHOUT mutating the index (so a failed embed never
@@ -120,13 +171,17 @@ export class ContextIndex {
     const rootAbs = path.resolve(rootPath);
     if (!fs.existsSync(rootAbs) || !fs.statSync(rootAbs).isDirectory()) throw new Error("not a folder: " + rootPath);
     const extSet = exts && exts.length ? new Set(exts.map((x) => (x.startsWith(".") ? x : "." + x).toLowerCase())) : null;
-    const files = this._walk(rootAbs, extSet);
+    let { files, blocked } = this._walk(rootAbs, extSet); // blocked may also flip true on a per-file EPERM below
     const records = [];
     for (const f of files) {
-      let content; try { content = fs.readFileSync(f.abs, "utf8"); } catch { continue; }
+      let content; try { content = fs.readFileSync(f.abs, "utf8"); } catch (e) { if (e && (e.code === "EPERM" || e.code === "EACCES")) blocked = true; continue; }
+      const ext = path.extname(f.abs).toLowerCase();
+      if (ext === ".ics") content = normalizeIcs(content);        // VEVENT -> "Event: ... | when: ..."
+      else if (ext === ".vcf") content = normalizeVcf(content);   // VCARD  -> "Contact: ... | email ..."
       for (const c of chunkText(content, 120, 20)) records.push({ sourceId: null, source: f.rel, sourceType: type, text: c });
     }
-    if (!records.length) throw new Error("no readable text files found in that folder");
+    // distinguish "macOS blocked the read" (-> ask for Full Disk Access) from "genuinely empty"
+    if (!records.length) throw new Error(blocked ? NEEDS_FDA : "no readable text files found in that folder");
     const vectors = await embed(records.map((r) => r.text), { onProgress });
     if (vectors.length !== records.length) throw new Error("embedding returned the wrong count");
     return { rootAbs, fileCount: files.length, records, vectors, dim: vectors[0].length };

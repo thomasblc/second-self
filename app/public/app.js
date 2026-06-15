@@ -394,9 +394,13 @@ $("train-scrim").onclick = closeTrainDrawer;
 
 // ---- weekly auto-retrain (opt-in, persisted server-side) ----
 const tgAuto = $("tg-autoretrain"), autoInterval = $("autoretrain-interval");
+const tgSync = $("tg-autosync"), syncInterval = $("autosync-interval");
 async function loadRetrainCfg() {
-  try { const c = await request("config.get"); tgAuto.checked = !!c.autoRetrain.enabled; autoInterval.value = String(c.autoRetrain.intervalDays || 7); $("autoretrain-row").style.display = tgAuto.checked ? "flex" : "none"; }
-  catch { /* */ }
+  try {
+    const c = await request("config.get");
+    tgAuto.checked = !!c.autoRetrain.enabled; autoInterval.value = String(c.autoRetrain.intervalDays || 7); $("autoretrain-row").style.display = tgAuto.checked ? "flex" : "none";
+    if (tgSync) { tgSync.checked = !!c.autoSync.enabled; syncInterval.value = String(c.autoSync.intervalHours || 24); syncInterval.style.display = tgSync.checked ? "" : "none"; }
+  } catch { /* */ }
 }
 function saveRetrainCfg() {
   $("autoretrain-row").style.display = tgAuto.checked ? "flex" : "none";
@@ -404,6 +408,11 @@ function saveRetrainCfg() {
 }
 tgAuto.onchange = () => { saveRetrainCfg(); toast(tgAuto.checked ? "Auto-retrain on: it re-selects your notes and retrains in the background." : "Auto-retrain off."); };
 autoInterval.onchange = saveRetrainCfg;
+function saveSyncCfg() {
+  syncInterval.style.display = tgSync.checked ? "" : "none";
+  request("config.set", { autoSync: { enabled: tgSync.checked, intervalHours: Number(syncInterval.value) } }).catch(() => {});
+}
+if (tgSync) { tgSync.onchange = () => { saveSyncCfg(); toast(tgSync.checked ? "Auto-sync on: sources re-index in the background to stay fresh." : "Auto-sync off."); }; syncInterval.onchange = saveSyncCfg; }
 on("autoRetrain.start", () => toast("Auto-retrain started in the background.", "warn"));
 on("autoRetrain.skip", (m) => toast("Auto-retrain skipped: " + (m.reason || ""), "warn"));
 on("autoRetrain.done", (m) => { toast(m.ok ? "Auto-retrain finished. Your refreshed voice is ready in Chat." : "Auto-retrain ended without an adapter.", m.ok ? "" : "warn"); refreshAdapters(); });
@@ -459,13 +468,29 @@ async function renderSources() {
   el.querySelectorAll("[data-reindex]").forEach((b) => b.onclick = async () => { toast("Re-indexing..."); try { await request("context.reindex", { sourceId: b.dataset.reindex }); toast("Re-indexed"); renderSources(); } catch (e) { toast(e.message, "bad"); } });
   el.querySelectorAll("[data-rm]").forEach((b) => b.onclick = async () => { try { await request("context.removeSource", { sourceId: b.dataset.rm }); renderSources(); toast("Removed from memory"); } catch (e) { toast(e.message, "bad"); } });
 }
+// add a context source; on a macOS permission block, open the Full Disk Access flow with a retry.
+async function indexSource(payload, label) {
+  toast(`Indexing ${label} (first run loads the embedder)...`);
+  try { const r = await request("context.addSource", payload); toast(`Added ${label}: ${r.source.docCount} files, ${r.source.chunkCount} chunks`); renderSources(); }
+  catch (e) { if (/FULL_DISK_ACCESS_REQUIRED/.test(e.message)) openFda(() => indexSource(payload, label)); else toast(`Could not add ${label}: ${e.message}`, "bad"); }
+}
 async function addSourceFlow() {
   const dir = await pickPath({ title: "Add a folder as a source", mode: "folder" });
   if (!dir) return;
-  toast("Indexing the folder (first run loads the embedder)...");
-  try { const r = await request("context.addSource", { path: dir }); toast(`Added: ${r.source.docCount} files, ${r.source.chunkCount} chunks`); renderSources(); }
-  catch (e) { toast("Could not add source: " + e.message, "bad"); }
+  indexSource({ path: dir }, "folder");
 }
+function addCalendarFlow() { indexSource({ preset: "calendar" }, "Apple Calendar"); }
+
+// ---- Full Disk Access modal (macOS) ----
+let fdaRetry = null;
+function openFda(retry) { fdaRetry = retry || null; $("fda").classList.add("show"); }
+function closeFda() { $("fda").classList.remove("show"); }
+$("fda-close").onclick = closeFda;
+$("fda").addEventListener("click", (e) => { if (e.target === $("fda")) closeFda(); });
+$("fda-open").onclick = () => { request("system.openSettings").catch(() => {}); toast("Enable Second Self (or Terminal) under Full Disk Access, then click Re-index."); };
+$("fda-retry").onclick = () => { closeFda(); const r = fdaRetry; fdaRetry = null; if (r) r(); };
+on("context.synced", (m) => toast(`Sources refreshed (${m.sources}). Memory is up to date.`));
+on("context.syncSkip", (m) => toast(`Sync skipped ${m.source}: ${m.reason}`, "warn"));
 on("chat.token", (m) => { if (curAssistantEl) { curAssistantEl._raw += m.text; curAssistantEl.querySelector(".body").innerHTML = renderMarkdown(curAssistantEl._raw); messages.scrollTop = messages.scrollHeight; } });
 on("chat.warn", (m) => toast(m.message, "warn"));
 function addMsg(role, text) {
@@ -796,6 +821,7 @@ settings.querySelectorAll(".stab").forEach((t) => t.onclick = () => setSettingsT
 $("set-onboard").onclick = () => { closeSettings(); startOnboarding(true); };
 $("set-ingest").onclick = () => ingest(); // stay in Settings so the source list updates in place
 $("set-addsource").onclick = addSourceFlow;
+$("set-addcal").onclick = addCalendarFlow;
 $("set-open").onclick = () => { closeSettings(); openVaultFlow(); };
 $("set-newvault").onclick = () => { closeSettings(); createVaultFlow(); };
 $("set-import").onclick = () => { closeSettings(); importCloudFlow(); };
@@ -929,6 +955,7 @@ document.addEventListener("keydown", (e) => {
     closePalette(); hoverCard.style.display = "none";
     if (settings.classList.contains("show")) closeSettings();
     if (picker.classList.contains("show")) finishPick(null);
+    if ($("fda").classList.contains("show")) closeFda();
     vaultPop.classList.remove("show");
     closeTrainDrawer();
     if ($("onboard").classList.contains("show")) endOnboarding();

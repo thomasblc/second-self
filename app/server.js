@@ -21,6 +21,7 @@ import { MasterServer, MasterClient } from "./lib/master-link.js";
 import { getConfig, saveConfig, rememberVault, forgetVault, CONFIG_DIR } from "./lib/config.js";
 import os from "node:os";
 import crypto from "node:crypto";
+import { execFile } from "node:child_process";
 
 // Per-boot WS token. The product promise is "100% local": this stops a co-resident
 // network-only process (a browser extension, another local service) that omits an Origin
@@ -118,7 +119,7 @@ const LOCAL_ONLY = new Set([
   "provider.start", "provider.stop", "remote.connect", "remote.disconnect", "remote.status",
   "config.get", "config.set",
   "vault.vaults", "vault.switchVault", "vault.setRoot", "vault.createVault", "vault.removeVault",
-  "fs.browse", "fs.mkdir", "import.cloud",
+  "fs.browse", "fs.mkdir", "import.cloud", "system.openSettings",
 ]);
 let graphCache = null;       // last built graph (link+tag), embed edges merged in place
 let lastSelection = null;    // last auto-selection result
@@ -180,6 +181,37 @@ function scheduleAutoRetrain(overrideMs) {
     ms = since >= intervalMs ? 60 * 1000 : Math.min(intervalMs - since, 2 ** 31 - 1); // overdue -> run soon
   }
   retrainTimer = setTimeout(doRetrain, ms);
+}
+
+// ---- auto-sync (opt-in): re-index every context source on a schedule so memory stays near-live.
+// Re-embed only (light); skips while a training run holds the worker. Build-then-swap per source,
+// so a now-blocked/deleted source is skipped (old data kept), not wiped. ----
+let syncTimer = null;
+async function doSync() {
+  const c = getConfig();
+  if (!c.autoSync.enabled) return;
+  if (trainer.isRunning() || retrainBusy) { scheduleAutoSync(10 * 60 * 1000); return; } // busy: retry in 10 min
+  let reindexed = 0;
+  for (const s of contextIndex.sources.slice()) {
+    try { await contextIndex.reindexSource(s.id, embedFor); reindexed++; }
+    catch (e) { broadcast({ type: "context.syncSkip", source: s.label, reason: String(e?.message || e) }); }
+  }
+  saveConfig({ autoSync: { lastRun: Date.now() } });
+  broadcast({ type: "context.synced", sources: reindexed });
+  scheduleAutoSync();
+}
+function scheduleAutoSync(overrideMs) {
+  if (syncTimer) { clearTimeout(syncTimer); syncTimer = null; }
+  const c = getConfig();
+  if (!c.autoSync.enabled) return;
+  let ms;
+  if (overrideMs != null) ms = overrideMs;
+  else {
+    const intervalMs = Math.max(1, c.autoSync.intervalHours || 24) * 3600000;
+    const since = c.autoSync.lastRun ? Date.now() - c.autoSync.lastRun : Infinity;
+    ms = since >= intervalMs ? 30 * 1000 : Math.min(intervalMs - since, 2 ** 31 - 1); // overdue -> run soon
+  }
+  syncTimer = setTimeout(doSync, ms);
 }
 
 // ---- static HTTP ----
@@ -305,18 +337,30 @@ async function handle(type, msg, { reply, fail, push }) {
       vault.setRoot(dir); rememberVault(dir, msg.name); invalidateCaches(); startVaultWatch();
       return reply({ root: vault.root, isDemo: isDemoVault() });
     }
-    case "config.get": { const c = getConfig(); return reply({ autoRetrain: c.autoRetrain, ui: c.ui }); }
+    case "config.get": { const c = getConfig(); return reply({ autoRetrain: c.autoRetrain, autoSync: c.autoSync, ui: c.ui }); }
     case "config.set": {
-      const prev = getConfig().autoRetrain;
-      const inA = msg.autoRetrain || {};
-      const enabled = !!inA.enabled;
-      const intervalDays = Math.min(365, Math.max(1, Number(inA.intervalDays) || prev.intervalDays || 7)); // sane bounds, never sub-day
-      const baseKey = BASES[inA.baseKey] ? inA.baseKey : (BASES[prev.baseKey] ? prev.baseKey : "1.7b"); // only known bases
-      let lastRun = prev.lastRun;
-      if (enabled && !prev.enabled && !lastRun) lastRun = Date.now(); // first enable: don't fire immediately
-      const c = saveConfig({ autoRetrain: { enabled, intervalDays, baseKey, lastRun }, ui: (msg.ui && typeof msg.ui === "object") ? msg.ui : {} });
-      scheduleAutoRetrain();
-      return reply({ autoRetrain: c.autoRetrain, ui: c.ui });
+      // only touch the section(s) the client actually sent (autoRetrain and autoSync are
+      // independent toggles in different panels; sending one must not reset the other).
+      const cur = getConfig(); const patch = {};
+      if (msg.autoRetrain) {
+        const prev = cur.autoRetrain, inA = msg.autoRetrain;
+        const enabled = !!inA.enabled;
+        const intervalDays = Math.min(365, Math.max(1, Number(inA.intervalDays) || prev.intervalDays || 7));
+        const baseKey = BASES[inA.baseKey] ? inA.baseKey : (BASES[prev.baseKey] ? prev.baseKey : "1.7b");
+        let lastRun = prev.lastRun; if (enabled && !prev.enabled && !lastRun) lastRun = Date.now(); // first enable: don't fire immediately
+        patch.autoRetrain = { enabled, intervalDays, baseKey, lastRun };
+      }
+      if (msg.autoSync) {
+        const prev = cur.autoSync, inS = msg.autoSync;
+        const enabled = !!inS.enabled;
+        const intervalHours = Math.min(168, Math.max(1, Number(inS.intervalHours) || prev.intervalHours || 24));
+        let lastRun = prev.lastRun; if (enabled && !prev.enabled && !lastRun) lastRun = Date.now();
+        patch.autoSync = { enabled, intervalHours, lastRun };
+      }
+      if (msg.ui && typeof msg.ui === "object") patch.ui = msg.ui;
+      const c = saveConfig(patch);
+      scheduleAutoRetrain(); scheduleAutoSync();
+      return reply({ autoRetrain: c.autoRetrain, autoSync: c.autoSync, ui: c.ui });
     }
     case "vault.list": return reply({ root: vault.root, files: vault.list() });
     case "vault.read": return reply({ path: msg.path, content: vault.read(msg.path) });
@@ -442,10 +486,19 @@ async function handle(type, msg, { reply, fail, push }) {
     // ---- personal context engine: sources beyond the vault ----
     case "context.sources": return reply(contextIndex.stats());
     case "context.addSource": {
-      if (!isDir(msg.path)) return fail("pick an existing folder");
+      // presets point at known macOS stores (TCC-protected -> may throw FULL_DISK_ACCESS_REQUIRED,
+      // which the UI turns into a "grant access" flow). Otherwise a plain user-picked folder.
+      const PRESETS = { calendar: { path: path.join(os.homedir(), "Library", "Calendars"), label: "Apple Calendar", type: "calendar", exts: ["ics"] } };
+      const p = (msg.preset && PRESETS[msg.preset]) || { path: msg.path, label: msg.label, type: "folder", exts: msg.exts || null };
+      if (!isDir(p.path)) return fail(msg.preset === "calendar" ? "Calendar store not found (~/Library/Calendars)" : "pick an existing folder");
       const onProgress = (d, t) => push({ type: "context.progress", phase: "embedding", done: d, total: t });
-      const src = await contextIndex.addFolderSource({ rootPath: msg.path, label: msg.label, type: "folder", exts: msg.exts || null }, embedFor, onProgress);
+      const src = await contextIndex.addFolderSource({ rootPath: p.path, label: p.label, type: p.type, exts: p.exts }, embedFor, onProgress);
       return reply({ source: src, ...contextIndex.stats() });
+    }
+    // open macOS System Settings to the Full Disk Access pane (so the user can grant it in one click)
+    case "system.openSettings": {
+      if (process.platform === "darwin") { try { execFile("open", ["x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles"]); } catch { /* */ } }
+      return reply({ opened: process.platform === "darwin" });
     }
     // NB: param is sourceId, NOT id - the WS frame already uses `id` for request matching;
     // a payload `id` would be spread over it and the reply would never match (silent hang).
@@ -559,6 +612,7 @@ server.listen(PORT, "127.0.0.1", () => {
   console.log(`default vault: ${vault.root}`);
   startVaultWatch();
   scheduleAutoRetrain();
+  scheduleAutoSync();
 });
 
 async function shutdown() { try { await masterServer.stop(); } catch { /* */ } try { await masterClient?.disconnect(); } catch { /* */ } await mm.unloadAll(); trainer.stop(); process.exit(0); }

@@ -220,6 +220,7 @@ select, .num { background: var(--bg); border: 1px solid var(--line); color: var(
 .modal { width: min(680px, 94vw); max-height: 86vh; background: var(--bg2); border: 1px solid var(--line); border-radius: 14px; box-shadow: var(--shadow); display: flex; flex-direction: column; overflow: hidden; }
 #settings { align-items: center; justify-content: center; }
 #picker { align-items: center; justify-content: center; }
+#fda { align-items: center; justify-content: center; }
 .modal-head { display: flex; align-items: center; padding: 14px 18px; border-bottom: 1px solid var(--line); }
 .modal-head h2 { margin: 0; font-size: 17px; font-family: var(--display); flex: 1; }
 .modal-body { display: flex; min-height: 0; flex: 1; }

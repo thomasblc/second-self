@@ -160,13 +160,23 @@ async function main() {
     // add a second folder source (a temp dir of docs)
     const extra = fs.mkdtempSync(path.join(os.tmpdir(), "ss-src-"));
     fs.writeFileSync(path.join(extra, "rocket.md"), "# Rockets\n\n" + "Rockets use staged combustion and cryogenic propellant. ".repeat(20));
+    // a .ics file: the connector should normalize the VEVENT to a readable, searchable line
+    fs.writeFileSync(path.join(extra, "cal.ics"), "BEGIN:VCALENDAR\nBEGIN:VEVENT\nSUMMARY:Quarterly budget review with Mallory\nDTSTART:20260720T100000Z\nLOCATION:HQ room 4\nEND:VEVENT\nEND:VCALENDAR\n");
     const added = await req("context.addSource", { path: extra });
     ok(added.source.chunkCount > 0, `context.addSource indexed a folder (${added.source.chunkCount} chunks)`);
     const csearch = await req("context.search", { query: "how do rockets work", topK: 5 });
     ok(csearch.hits.some((h) => h.source.includes("rocket")), "context.search finds + cites the added source");
+    const ical = await req("context.search", { query: "budget review meeting with Mallory", topK: 5 });
+    ok(ical.hits.some((h) => h.content.includes("Mallory") && h.source.endsWith(".ics")), "calendar .ics event is normalized + retrievable");
     await req("context.removeSource", { sourceId: added.source.id });
     ok(!(await req("context.sources")).sources.some((s) => s.id === added.source.id), "context.removeSource forgets the source");
     fs.rmSync(extra, { recursive: true, force: true });
+
+    // auto-sync config sanitizes + persists independently of auto-retrain
+    const sc = await req("config.set", { autoSync: { enabled: true, intervalHours: 0 } });
+    ok(sc.autoSync.enabled && sc.autoSync.intervalHours >= 1, "config.set autoSync sanitizes interval (>=1h)");
+    await req("config.set", { autoSync: { enabled: false } }); // don't leave a background re-index scheduled
+    ok((await req("config.get")).autoSync.enabled === false, "auto-sync reflects disabled");
 
     const cat = await req("model.catalog");
     ok(cat.models.length >= 8, `model catalog returns the curated set (${cat.models.length})`);
