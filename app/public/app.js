@@ -489,8 +489,10 @@ $("fda-close").onclick = closeFda;
 $("fda").addEventListener("click", (e) => { if (e.target === $("fda")) closeFda(); });
 $("fda-open").onclick = () => { request("system.openSettings").catch(() => {}); toast("Enable Second Self (or Terminal) under Full Disk Access, then click Re-index."); };
 $("fda-retry").onclick = () => { closeFda(); const r = fdaRetry; fdaRetry = null; if (r) r(); };
-on("context.synced", (m) => toast(`Sources refreshed (${m.sources}). Memory is up to date.`));
-on("context.syncSkip", (m) => toast(`Sync skipped ${m.source}: ${m.reason}`, "warn"));
+on("context.synced", (m) => { if (m.sources > 0) { toast(`Memory refreshed: ${m.sources} source${m.sources === 1 ? "" : "s"} re-indexed.`); renderSources(); } });
+on("context.syncSkip", (m) => toast(/FULL_DISK_ACCESS_REQUIRED/.test(m.reason)
+  ? `Sync skipped "${m.source}": needs Full Disk Access. Open Settings > Memory to grant it.`
+  : `Sync skipped "${m.source}": ${m.reason}`, "warn"));
 on("chat.token", (m) => { if (curAssistantEl) { curAssistantEl._raw += m.text; curAssistantEl.querySelector(".body").innerHTML = renderMarkdown(curAssistantEl._raw); messages.scrollTop = messages.scrollHeight; } });
 on("chat.warn", (m) => toast(m.message, "warn"));
 function addMsg(role, text) {

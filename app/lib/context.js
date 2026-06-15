@@ -220,16 +220,36 @@ export class ContextIndex {
     return true;
   }
 
-  // Re-index a source: BUILD the fresh data first; only remove the old + commit once it succeeds.
+  // Swap a source's records/vectors in place, keeping the SAME id (atomic, synchronous, no await).
+  // Reindex uses this instead of remove+commit so a source's identity is STABLE across re-indexing:
+  // two concurrent reindexes of one id collapse to one source (no duplicate), and a source that was
+  // deleted mid-embed is never resurrected (the caller bails before calling this).
+  _replaceSource(id, built, { label }) {
+    if (this.dim && built.dim !== this.dim) throw new Error(`embedding dim mismatch (${built.dim} vs ${this.dim})`);
+    const keepRec = [], keepVec = [];
+    for (let i = 0; i < this.records.length; i++) if (this.records[i].sourceId !== id) { keepRec.push(this.records[i]); keepVec.push(this.vectors[i]); }
+    for (const r of built.records) { r.sourceId = id; keepRec.push(r); }
+    for (const v of built.vectors) keepVec.push(v);
+    this.records = keepRec; this.vectors = keepVec;
+    if (!this.dim) this.dim = built.dim;
+    const src = this.sources.find((s) => s.id === id);
+    if (src) { src.path = built.rootAbs; if (label) src.label = label; src.lastIndexedAt = Date.now(); src.docCount = built.fileCount; src.chunkCount = built.records.length; }
+    this._save();
+    return src;
+  }
+
+  // Re-index a source: BUILD the fresh data first; only swap the records in once it succeeds.
   // (Removing first would lose the source on an empty/deleted folder or an embed failure.)
   async reindexSource(id, embed, onProgress) {
     const src = this.getSource(id);
     if (!src) throw new Error("unknown source");
-    const prevDim = this.dim; // removeSource may zero dim if this is the only source; keep the guard meaningful
+    const prevDim = this.dim;
     const built = await this._buildFolder({ rootPath: src.path, type: src.type, exts: src.exts }, embed, onProgress);
     if (prevDim && built.dim !== prevDim) throw new Error(`embedding dim changed (${built.dim} vs ${prevDim}); clear + re-index all sources`);
-    this.removeSource(id);
-    return this._commit(built, { type: src.type, label: src.label, exts: src.exts });
+    // the source may have been removed while we were embedding (user delete, or a concurrent sync);
+    // do NOT resurrect it. Re-fetch by id rather than trusting the stale `src` reference.
+    if (!this.getSource(id)) return null;
+    return this._replaceSource(id, built, { label: src.label });
   }
 
   // Cosine top-k over all (or a filtered set of) sources. Returns citable records + scores.

@@ -11,7 +11,7 @@ import { z } from "zod";
 import { Vault } from "./lib/vault.js";
 import { buildGraph, addEmbedEdges } from "./lib/graph.js";
 import { ModelManager, topKPairs, cosine, BASES } from "./lib/models.js";
-import { ContextIndex } from "./lib/context.js";
+import { ContextIndex, NEEDS_FDA } from "./lib/context.js";
 import { buildRecords, selectByEmbedding, refineWithLLM, buildCausalDataset } from "./lib/select.js";
 import { Trainer } from "./lib/train.js";
 import { buildCatalog, constantFor, modelTypeFor, deleteCached } from "./lib/catalog.js";
@@ -42,6 +42,9 @@ const PORT = Number(process.env.PORT || 3090);
 // The bundled demo vault: always offered so the user can explore / get back to it.
 const SAMPLE = path.join(APP_DIR, "sample-vault");
 const isDir = (p) => { try { return !!p && fs.statSync(p).isDirectory(); } catch { return false; } };
+// Like isDir but tells a TCC-blocked store (needs Full Disk Access) apart from a truly-absent one,
+// so a preset whose directory itself is permission-denied still routes to the grant-access flow.
+const dirStatus = (p) => { try { return fs.statSync(p).isDirectory() ? "dir" : "notdir"; } catch (e) { return (e && (e.code === "EPERM" || e.code === "EACCES")) ? "blocked" : "absent"; } };
 
 // Vault precedence: $SECOND_SELF_VAULT (explicit override) > last vault from config >
 // bundled demo > this repo's docs/ (dev fallback). The chosen one is remembered in config.
@@ -145,10 +148,11 @@ async function ensureDocEmb(push) {
 // run is active; catches up shortly after boot if the interval has already lapsed. ----
 let retrainTimer = null;
 let retrainBusy = false; // true while doRetrain holds the shared model worker (embed -> unload -> train)
+let syncBusy = false;    // true for the WHOLE doSync loop, so a retrain (which bypasses the worker mutex) can't slip between sources
 async function doRetrain() {
   const c = getConfig();
   if (!c.autoRetrain.enabled) return;
-  if (trainer.isRunning() || retrainBusy) { scheduleAutoRetrain(60 * 1000); return; } // busy: retry in a minute
+  if (trainer.isRunning() || retrainBusy || syncBusy) { scheduleAutoRetrain(60 * 1000); return; } // busy (incl. a background sync): retry in a minute
   retrainBusy = true; // block user MODEL_OPS during the embed+unload window (before trainer.isRunning() flips)
   try {
     broadcast({ type: "autoRetrain.start" });
@@ -190,15 +194,18 @@ let syncTimer = null;
 async function doSync() {
   const c = getConfig();
   if (!c.autoSync.enabled) return;
-  if (trainer.isRunning() || retrainBusy) { scheduleAutoSync(10 * 60 * 1000); return; } // busy: retry in 10 min
-  let reindexed = 0;
-  for (const s of contextIndex.sources.slice()) {
-    try { await contextIndex.reindexSource(s.id, embedFor); reindexed++; }
-    catch (e) { broadcast({ type: "context.syncSkip", source: s.label, reason: String(e?.message || e) }); }
-  }
-  saveConfig({ autoSync: { lastRun: Date.now() } });
-  broadcast({ type: "context.synced", sources: reindexed });
-  scheduleAutoSync();
+  if (syncBusy) return;                                                                  // a sync is already running; it re-arms the timer when it finishes
+  if (trainer.isRunning() || retrainBusy) { scheduleAutoSync(10 * 60 * 1000); return; }  // busy: retry in 10 min
+  syncBusy = true;
+  try {
+    let reindexed = 0;
+    for (const s of contextIndex.sources.slice()) {
+      try { const r = await contextIndex.reindexSource(s.id, embedFor); if (r) reindexed++; } // null => source was removed mid-sync; don't count it
+      catch (e) { broadcast({ type: "context.syncSkip", source: s.label, reason: String(e?.message || e) }); }
+    }
+    saveConfig({ autoSync: { lastRun: Date.now() } });
+    broadcast({ type: "context.synced", sources: reindexed });
+  } finally { syncBusy = false; scheduleAutoSync(); }
 }
 function scheduleAutoSync(overrideMs) {
   if (syncTimer) { clearTimeout(syncTimer); syncTimer = null; }
@@ -359,7 +366,10 @@ async function handle(type, msg, { reply, fail, push }) {
       }
       if (msg.ui && typeof msg.ui === "object") patch.ui = msg.ui;
       const c = saveConfig(patch);
-      scheduleAutoRetrain(); scheduleAutoSync();
+      // re-arm only the scheduler whose config actually changed (re-arming sync needlessly could
+      // start an overdue run while another is in flight; the syncBusy guard catches it, but don't poke it)
+      if (msg.autoRetrain) scheduleAutoRetrain();
+      if (msg.autoSync) scheduleAutoSync();
       return reply({ autoRetrain: c.autoRetrain, autoSync: c.autoSync, ui: c.ui });
     }
     case "vault.list": return reply({ root: vault.root, files: vault.list() });
@@ -490,7 +500,9 @@ async function handle(type, msg, { reply, fail, push }) {
       // which the UI turns into a "grant access" flow). Otherwise a plain user-picked folder.
       const PRESETS = { calendar: { path: path.join(os.homedir(), "Library", "Calendars"), label: "Apple Calendar", type: "calendar", exts: ["ics"] } };
       const p = (msg.preset && PRESETS[msg.preset]) || { path: msg.path, label: msg.label, type: "folder", exts: msg.exts || null };
-      if (!isDir(p.path)) return fail(msg.preset === "calendar" ? "Calendar store not found (~/Library/Calendars)" : "pick an existing folder");
+      const st = dirStatus(p.path);
+      if (st === "blocked") return fail(NEEDS_FDA); // even stat-ing it is TCC-denied -> let the UI open the grant-access flow
+      if (st !== "dir") return fail(msg.preset === "calendar" ? "Calendar store not found (~/Library/Calendars)" : "pick an existing folder");
       const onProgress = (d, t) => push({ type: "context.progress", phase: "embedding", done: d, total: t });
       const src = await contextIndex.addFolderSource({ rootPath: p.path, label: p.label, type: p.type, exts: p.exts }, embedFor, onProgress);
       return reply({ source: src, ...contextIndex.stats() });
@@ -520,6 +532,7 @@ async function handle(type, msg, { reply, fail, push }) {
     case "train.start": {
       if (trainer.isRunning()) return fail("a run is already active");
       if (retrainBusy) return fail("a background retrain is starting - try again in a moment"); // avoid racing doRetrain for the worker lock before it flips isRunning()
+      if (syncBusy) return fail("a background sync is running - try again in a moment"); // training bypasses the worker mutex; don't collide with an in-flight re-index
       const paths = (msg.paths && msg.paths.length) ? msg.paths
         : (lastSelection ? lastSelection.filter((s) => s.selected).map((s) => s.path) : []);
       if (!paths.length) return fail("no documents selected to train on (run auto-select first)");

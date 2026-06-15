@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const SAMPLE = path.join(ROOT, "app", "sample-vault");
+const SAMPLE2 = path.join(SAMPLE, "projects"); // a distinct subfolder (own path) with real .md files, for the mid-flight-remove race
 const mm = new ModelManager({ ctxSize: 4096 });
 const embed = (t, o) => mm.embedMany(t, o);
 let pass = 0, fail = 0;
@@ -38,6 +39,17 @@ const ok = (c, m) => { if (c) { pass++; console.log("  PASS " + m); } else { fai
   const re = await ix2.reindexSource(src.id, embed);
   ok(ix2.records.length === before && re.chunkCount === before, `reindex rebuilds atomically (${re.chunkCount} chunks)`);
   ok(ix2.records.length === ix2.vectors.length, "records/vectors aligned after reindex");
+  // reindex keeps the SAME id (stable identity) so it can never spawn a duplicate source
+  ok(re.id === src.id, "reindex preserves the source id (stable, no duplicate)");
+  ok(ix2.sources.length === 1, "reindex did not create a second source");
+
+  // no resurrection: a source removed WHILE its reindex is in flight must NOT come back
+  const tmp = await ix2.addFolderSource({ rootPath: SAMPLE2, label: "tmp", type: "folder", exts: ["md"] }, embed);
+  const racing = ix2.reindexSource(tmp.id, embed); // embed is awaited inside; control returns here first
+  ix2.removeSource(tmp.id);                         // user deletes it mid-embed
+  const resurrected = await racing;
+  ok(resurrected === null, "reindex of a source removed mid-flight returns null (no resurrection)");
+  ok(!ix2.getSource(tmp.id) && ix2.sources.length === 1, "the removed source stays removed; no ghost re-added");
 
   // remove
   ix2.removeSource(re.id);
