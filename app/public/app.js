@@ -295,12 +295,13 @@ async function showGraphNode(path) {
   $("graph-side-title").textContent = path.split("/").pop().replace(/\.md$/i, "");
   $("graph-side-title").title = path;
   graphSide.classList.add("show");
+  requestAnimationFrame(sizeGraph); // the panel narrowed #graph-left; reflow the canvas so the graph isn't squished
   const body = $("graph-side-body");
   body.innerHTML = `<span style="color:var(--mut)">Loading...</span>`;
   try { const r = await request("vault.read", { path }); body.innerHTML = renderMarkdown(r.content || "*(empty note)*"); }
   catch { body.innerHTML = `<span style="color:var(--mut)">Could not read this note.</span>`; }
 }
-function closeGraphSide() { graphSide.classList.remove("show"); graphSidePath = null; }
+function closeGraphSide() { graphSide.classList.remove("show"); graphSidePath = null; requestAnimationFrame(sizeGraph); }
 $("graph-side-close").onclick = closeGraphSide;
 $("graph-side-open").onclick = () => { if (graphSidePath) openNote(graphSidePath); };
 function sizeGraph() { const r = $("graph-left").getBoundingClientRect(); graph.resize(r.width, r.height); graph.reheat(); }
