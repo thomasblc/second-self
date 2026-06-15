@@ -458,12 +458,14 @@ async function renderSources() {
   const el = $("set-sources-list"); if (!el) return;
   let d; try { d = await request("context.sources"); } catch { return; }
   if (!d.sources.length) { el.innerHTML = `<div style="color:var(--mut);font-size:12px">No sources yet. Index your vault, or add a folder below.</div>`; return; }
+  const ICON = { vault: "&#128214;", folder: "&#128193;", calendar: "&#128197;", mail: "&#9993;&#65039;", contacts: "&#128100;", browser: "&#127760;", messages: "&#128172;" };
+  const UNIT = { vault: "files", folder: "files", calendar: "events", mail: "emails", contacts: "contacts", browser: "pages", messages: "messages" };
   el.innerHTML = d.sources.map((s) => `
     <div class="vault-item" data-id="${escapeHtml(s.id)}">
-      <div class="vi-main"><div class="vi-name">${s.type === "vault" ? "&#128214; " : "&#128193; "}${escapeHtml(s.label)}</div>
-        <div class="vi-path">${escapeHtml(s.path)} &middot; ${s.chunkCount} chunks from ${s.docCount} files</div></div>
+      <div class="vi-main"><div class="vi-name">${ICON[s.type] || ICON.folder} ${escapeHtml(s.label)}</div>
+        <div class="vi-path">${escapeHtml(s.path)} &middot; ${s.chunkCount} chunks from ${s.docCount} ${UNIT[s.type] || "items"}</div></div>
       <button class="btn vi-act" data-reindex="${escapeHtml(s.id)}" title="Re-index">&#8635;</button>
-      <button class="vi-remove" data-rm="${escapeHtml(s.id)}" title="Remove from memory (does not delete files)">&times;</button>
+      <button class="vi-remove" data-rm="${escapeHtml(s.id)}" title="Remove from memory (does not delete your data)">&times;</button>
     </div>`).join("");
   el.querySelectorAll("[data-reindex]").forEach((b) => b.onclick = async () => { toast("Re-indexing..."); try { await request("context.reindex", { sourceId: b.dataset.reindex }); toast("Re-indexed"); renderSources(); } catch (e) { toast(e.message, "bad"); } });
   el.querySelectorAll("[data-rm]").forEach((b) => b.onclick = async () => { try { await request("context.removeSource", { sourceId: b.dataset.rm }); renderSources(); toast("Removed from memory"); } catch (e) { toast(e.message, "bad"); } });
@@ -471,7 +473,7 @@ async function renderSources() {
 // add a context source; on a macOS permission block, open the Full Disk Access flow with a retry.
 async function indexSource(payload, label) {
   toast(`Indexing ${label} (first run loads the embedder)...`);
-  try { const r = await request("context.addSource", payload); toast(`Added ${label}: ${r.source.docCount} files, ${r.source.chunkCount} chunks`); renderSources(); }
+  try { const r = await request("context.addSource", payload); const unit = (r.source.type && r.source.type !== "folder" && r.source.type !== "vault") ? "entries" : "files"; toast(`Added ${label}: ${r.source.docCount} ${unit}, ${r.source.chunkCount} chunks`); renderSources(); }
   catch (e) { if (/FULL_DISK_ACCESS_REQUIRED/.test(e.message)) openFda(() => indexSource(payload, label)); else toast(`Could not add ${label}: ${e.message}`, "bad"); }
 }
 async function addSourceFlow() {
@@ -480,6 +482,9 @@ async function addSourceFlow() {
   indexSource({ path: dir }, "folder");
 }
 function addCalendarFlow() { indexSource({ preset: "calendar" }, "Apple Calendar"); }
+// macOS store connectors: all flow through indexSource, which opens the Full Disk Access modal on a TCC block.
+const PRESET_LABELS = { mail: "Apple Mail", contacts: "Contacts", browser: "Browser history", messages: "Messages" };
+function addPresetFlow(preset) { indexSource({ preset }, PRESET_LABELS[preset] || preset); }
 
 // ---- Full Disk Access modal (macOS) ----
 let fdaRetry = null;
@@ -824,6 +829,10 @@ $("set-onboard").onclick = () => { closeSettings(); startOnboarding(true); };
 $("set-ingest").onclick = () => ingest(); // stay in Settings so the source list updates in place
 $("set-addsource").onclick = addSourceFlow;
 $("set-addcal").onclick = addCalendarFlow;
+$("set-addmail").onclick = () => addPresetFlow("mail");
+$("set-addcontacts").onclick = () => addPresetFlow("contacts");
+$("set-addbrowser").onclick = () => addPresetFlow("browser");
+$("set-addmessages").onclick = () => addPresetFlow("messages");
 $("set-open").onclick = () => { closeSettings(); openVaultFlow(); };
 $("set-newvault").onclick = () => { closeSettings(); createVaultFlow(); };
 $("set-import").onclick = () => { closeSettings(); importCloudFlow(); };

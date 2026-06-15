@@ -247,9 +247,15 @@
           <div class="set-info"><b>Add a folder as a source</b><span>Point the AI at a folder of documents (markdown, text, code). Read-only, indexed locally.</span></div>
           <button class="btn primary" id="set-addsource">Add folder...</button>
         </div>
-        <div class="set-row">
-          <div class="set-info"><b>Add your Apple Calendar</b><span>Index your events ("when am I seeing Marco?"). macOS will ask for Full Disk Access the first time. Read-only, on-device.</span></div>
-          <button class="btn" id="set-addcal">&#128197; Add Calendar</button>
+        <div class="set-row col">
+          <div class="set-info"><b>Connect your Mac</b><span>Index a native macOS source on-device so the AI knows your real life ("when am I seeing Marco?", "what was I researching?"). Each is read-only; macOS asks for Full Disk Access the first time for protected stores. Nothing is uploaded. You choose what to add.</span></div>
+          <div class="row" style="gap:8px; flex-wrap:wrap; margin-top:8px">
+            <button class="btn" id="set-addcal" title="Index your calendar events (~/Library/Calendars)">&#128197; Calendar</button>
+            <button class="btn" id="set-addmail" title="Index your Apple Mail messages (subject, sender, snippet)">&#9993;&#65039; Mail</button>
+            <button class="btn" id="set-addcontacts" title="Index your address book (name, org, email, phone)">&#128100; Contacts</button>
+            <button class="btn" id="set-addbrowser" title="Index your browser history (page titles + URLs + dates)">&#127760; Browser history</button>
+            <button class="btn" id="set-addmessages" title="Index your Messages. Read on-device only; nothing leaves your Mac.">&#128172; Messages</button>
+          </div>
         </div>
         <div class="set-row">
           <div class="set-info"><b>Keep sources fresh</b><span>Re-index your sources automatically so memory stays near-live (good for the calendar). Runs in the background.</span></div>

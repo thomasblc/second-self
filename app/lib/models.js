@@ -189,18 +189,33 @@ export class ModelManager {
 // Split a document into overlapping word-windowed chunks for retrieval.
 // Strips YAML front-matter, packs by paragraph up to wordsPerChunk, with a small
 // word overlap so a fact split across a boundary is still retrievable.
+// Hard character cap per chunk. The embedder rejects inputs over ~1024 tokens; a single giant
+// "word" (a long tracking URL, a base64 blob, a minified line) would otherwise ride in one chunk
+// and overflow the batch. ~1200 chars stays well under the token limit even for punctuation-dense
+// text (URLs/code tokenize to more tokens per char). Splitting on chars is lossy for such blobs
+// but keeps every source embeddable.
+const MAX_CHUNK_CHARS = 1200;
+function capChunk(s) {
+  if (s.length <= MAX_CHUNK_CHARS) return [s];
+  const out = [];
+  for (let i = 0; i < s.length; i += MAX_CHUNK_CHARS) out.push(s.slice(i, i + MAX_CHUNK_CHARS));
+  return out;
+}
+
 export function chunkText(doc, wordsPerChunk = 120, overlap = 20) {
   const body = String(doc || "").replace(/^---\n[\s\S]*?\n---\n/, "").trim();
   if (!body) return [];
   const words = body.split(/\s+/);
-  if (words.length <= wordsPerChunk) return [body];
-  const chunks = [];
-  const step = Math.max(1, wordsPerChunk - overlap);
-  for (let i = 0; i < words.length; i += step) {
-    chunks.push(words.slice(i, i + wordsPerChunk).join(" "));
-    if (i + wordsPerChunk >= words.length) break;
+  const raw = [];
+  if (words.length <= wordsPerChunk) raw.push(body);
+  else {
+    const step = Math.max(1, wordsPerChunk - overlap);
+    for (let i = 0; i < words.length; i += step) {
+      raw.push(words.slice(i, i + wordsPerChunk).join(" "));
+      if (i + wordsPerChunk >= words.length) break;
+    }
   }
-  return chunks;
+  return raw.flatMap(capChunk); // sub-split any chunk that a single huge token blew past the cap
 }
 
 // Cosine similarity for the graph's semantic edges.

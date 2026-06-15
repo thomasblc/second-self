@@ -2,6 +2,7 @@
 // the knowledge graph, on-device embeddings/RAG, the LoRA trainer, and chat.
 // Everything runs locally. The only network call in the whole app is the first-run
 // model download into ~/.qvac/models. Privacy boundary is the product (recipe rule 4).
+import "./lib/_boot.js"; // FIRST: silences the benign node:sqlite experimental warning before connectors load
 import http from "node:http";
 import fs from "node:fs";
 import path from "node:path";
@@ -12,6 +13,7 @@ import { Vault } from "./lib/vault.js";
 import { buildGraph, addEmbedEdges } from "./lib/graph.js";
 import { ModelManager, topKPairs, cosine, BASES } from "./lib/models.js";
 import { ContextIndex, NEEDS_FDA } from "./lib/context.js";
+import { resolveStorePath, SQLITE_TYPES } from "./lib/os-stores.js";
 import { buildRecords, selectByEmbedding, refineWithLLM, buildCausalDataset } from "./lib/select.js";
 import { Trainer } from "./lib/train.js";
 import { buildCatalog, constantFor, modelTypeFor, deleteCached } from "./lib/catalog.js";
@@ -499,11 +501,26 @@ async function handle(type, msg, { reply, fail, push }) {
     case "context.addSource": {
       // presets point at known macOS stores (TCC-protected -> may throw FULL_DISK_ACCESS_REQUIRED,
       // which the UI turns into a "grant access" flow). Otherwise a plain user-picked folder.
-      const PRESETS = { calendar: { path: path.join(os.homedir(), "Library", "Calendars"), label: "Apple Calendar", type: "calendar", exts: ["ics"] } };
+      // Folder stores (calendar/mail) live at a fixed dir; SQLite stores (browser/contacts/messages)
+      // are file-backed and resolved across known browsers / locations.
+      const home = os.homedir();
+      const PRESETS = {
+        calendar: { path: path.join(home, "Library", "Calendars"), label: "Apple Calendar", type: "calendar", exts: ["ics"] },
+        mail:     { path: resolveStorePath("mail"),     label: "Apple Mail",      type: "mail", exts: ["emlx"] },
+        browser:  { path: resolveStorePath("browser"),  label: "Browser history", type: "browser" },
+        contacts: { path: resolveStorePath("contacts"), label: "Contacts",        type: "contacts" },
+        messages: { path: resolveStorePath("messages"), label: "Messages",        type: "messages" },
+      };
+      if (msg.preset && !PRESETS[msg.preset]) return fail("unknown source preset");
       const p = (msg.preset && PRESETS[msg.preset]) || { path: msg.path, label: msg.label, type: "folder", exts: msg.exts || null };
-      const st = dirStatus(p.path);
-      if (st === "blocked") return fail(NEEDS_FDA); // even stat-ing it is TCC-denied -> let the UI open the grant-access flow
-      if (st !== "dir") return fail(msg.preset === "calendar" ? "Calendar store not found (~/Library/Calendars)" : "pick an existing folder");
+      if (msg.preset && !p.path) return fail(`No ${p.label} found on this machine.`); // app not installed / store absent
+      // folder-type sources get a friendly existence/permission precheck; SQLite stores are file-backed
+      // and validated inside _buildSqlite (which throws NEEDS_FDA on a TCC block), so skip the dir check.
+      if (!SQLITE_TYPES.has(p.type)) {
+        const st = dirStatus(p.path);
+        if (st === "blocked") return fail(NEEDS_FDA); // even stat-ing it is TCC-denied -> open the grant-access flow
+        if (st !== "dir") return fail(msg.preset ? `${p.label} store not found` : "pick an existing folder");
+      }
       const onProgress = (d, t) => push({ type: "context.progress", phase: "embedding", done: d, total: t });
       const src = await contextIndex.addFolderSource({ rootPath: p.path, label: p.label, type: p.type, exts: p.exts }, embedFor, onProgress);
       return reply({ source: src, ...contextIndex.stats() });

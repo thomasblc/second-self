@@ -2,8 +2,11 @@
 // Run with an isolated config dir: SECOND_SELF_CONFIG_DIR=$(mktemp -d) node spike/context-index-test.mjs
 import { ContextIndex } from "../app/lib/context.js";
 import { ModelManager } from "../app/lib/models.js";
+import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { DatabaseSync } from "node:sqlite";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const SAMPLE = path.join(ROOT, "app", "sample-vault");
@@ -56,6 +59,22 @@ const ok = (c, m) => { if (c) { pass++; console.log("  PASS " + m); } else { fai
   ok(ix2.records.length === 0 && ix2.vectors.length === 0 && ix2.sources.length === 0, "removeSource clears records + vectors + source");
   const ix3 = new ContextIndex();
   ok(ix3.records.length === 0, "removal persisted");
+
+  // SQLite-backed source: a synthetic Chromium History DB indexed + searched through _build (real embed)
+  const histDb = path.join(os.tmpdir(), `ss-spike-hist-${process.pid}.db`); fs.rmSync(histDb, { force: true });
+  { const db = new DatabaseSync(histDb);
+    db.exec("CREATE TABLE urls(id INTEGER PRIMARY KEY, url TEXT, title TEXT, visit_count INT, typed_count INT, last_visit_time INT, hidden INT)");
+    const t = (Math.floor(Date.UTC(2026, 5, 10) / 1000) + 11644473600) * 1000000;
+    db.prepare("INSERT INTO urls VALUES(1,?,?,?,0,?,0)").run("https://example.com/quantization-explained", "Model quantization explained", 5, BigInt(t));
+    db.close(); }
+  const bsrc = await ix3.addFolderSource({ rootPath: histDb, label: "Browser history", type: "browser" }, embed);
+  ok(bsrc.chunkCount > 0 && bsrc.type === "browser", `sqlite browser source indexed (${bsrc.chunkCount} chunks)`);
+  const bhits = ix3.search((await mm.embedMany(["what did I read about quantization?"]))[0], { topK: 3 });
+  ok(bhits.length > 0 && bhits[0].sourceType === "browser" && /quantization/i.test(bhits[0].text), "sqlite source is searchable + cited by type");
+  // reindex re-reads the live DB (build-then-swap) and keeps the same id
+  const bre = await ix3.reindexSource(bsrc.id, embed);
+  ok(bre && bre.id === bsrc.id, "sqlite source reindexes in place (same id)");
+  fs.rmSync(histDb, { force: true });
 
   await mm.unloadAll();
   console.log(`\n${pass} passed, ${fail} failed`);

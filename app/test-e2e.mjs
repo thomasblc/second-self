@@ -162,15 +162,27 @@ async function main() {
     fs.writeFileSync(path.join(extra, "rocket.md"), "# Rockets\n\n" + "Rockets use staged combustion and cryogenic propellant. ".repeat(20));
     // a .ics file: the connector should normalize the VEVENT to a readable, searchable line
     fs.writeFileSync(path.join(extra, "cal.ics"), "BEGIN:VCALENDAR\nBEGIN:VEVENT\nSUMMARY:Quarterly budget review with Mallory\nDTSTART:20260720T100000Z\nLOCATION:HQ room 4\nEND:VEVENT\nEND:VCALENDAR\n");
+    // an .emlx file (Apple Mail): normalized to an "Email: subject | from ... | body" line
+    fs.writeFileSync(path.join(extra, "msg.emlx"), "210\nFrom: Trent <trent@example.com>\nTo: me@example.com\nSubject: Offsite logistics in Lisbon\nDate: Mon, 10 Jun 2026 09:00:00 +0000\n\nFlights are booked, hotel near the venue.\n<?xml version=\"1.0\"?><plist></plist>");
     const added = await req("context.addSource", { path: extra });
     ok(added.source.chunkCount > 0, `context.addSource indexed a folder (${added.source.chunkCount} chunks)`);
     const csearch = await req("context.search", { query: "how do rockets work", topK: 5 });
     ok(csearch.hits.some((h) => h.source.includes("rocket")), "context.search finds + cites the added source");
     const ical = await req("context.search", { query: "budget review meeting with Mallory", topK: 5 });
     ok(ical.hits.some((h) => h.content.includes("Mallory") && h.source.endsWith(".ics")), "calendar .ics event is normalized + retrievable");
+    const mail = await req("context.search", { query: "offsite flights and hotel in Lisbon", topK: 5 });
+    ok(mail.hits.some((h) => h.content.includes("Lisbon") && h.source.endsWith(".emlx")), "mail .emlx is normalized + retrievable");
     await req("context.removeSource", { sourceId: added.source.id });
     ok(!(await req("context.sources")).sources.some((s) => s.id === added.source.id), "context.removeSource forgets the source");
     fs.rmSync(extra, { recursive: true, force: true });
+
+    // SQLite-preset wiring (browser): indexes if a browser is installed, else errors cleanly (no crash).
+    // Machine-independent: any of these outcomes proves the preset map + SQLite dispatch are wired.
+    let browserOutcome;
+    try { const r = await req("context.addSource", { preset: "browser" }); browserOutcome = `indexed ${r.source.chunkCount} chunks`; if (r.source) await req("context.removeSource", { sourceId: r.source.id }); }
+    catch (e) { browserOutcome = e.message; }
+    ok(/chunks|not found|FULL_DISK_ACCESS_REQUIRED|No Browser/i.test(browserOutcome), `browser SQLite preset wired (${browserOutcome})`);
+    await req("context.addSource", { preset: "nope" }).then(() => ok(false, "unknown preset should fail")).catch((e) => ok(/unknown source preset/.test(e.message), "unknown preset rejected"));
 
     // auto-sync config sanitizes + persists independently of auto-retrain
     const sc = await req("config.set", { autoSync: { enabled: true, intervalHours: 0 } });

@@ -12,9 +12,11 @@
 // - Retrieval is cosine top-k today (the spike showed it's a strong baseline); source/recency
 //   weighting + hybrid search are the documented next lever for scale.
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { cosine, chunkText } from "./models.js";
 import { CONFIG_DIR } from "./config.js";
+import { SQLITE_TYPES, readStore } from "./os-stores.js";
 
 const DIR = path.join(CONFIG_DIR, "context");
 const META = path.join(DIR, "index.json");
@@ -27,6 +29,7 @@ export const TEXT_EXTS = new Set([
   ".cs", ".rb", ".php", ".swift", ".kt", ".sh", ".sql", ".lua", ".r",
   ".json", ".yaml", ".yml", ".toml", ".ini", ".csv", ".tsv", ".html", ".css", ".xml",
   ".ics", ".vcf", // calendar events + contacts (normalized to readable lines below)
+  ".emlx",        // Apple Mail messages (normalized to From/To/Subject/body lines below)
 ]);
 
 // Some macOS data lives in TCC-protected stores (Calendar, Mail, Messages...). Reading them from
@@ -75,6 +78,27 @@ export function normalizeVcf(text) {
     cards.push(line);
   }
   return cards.join("\n");
+}
+// .emlx (Apple Mail) -> one "Email: subject | from | to | date | body-snippet" line.
+// Format: a byte-count line, then the RFC822 message, then an XML plist trailer.
+export function normalizeEmlx(text) {
+  const s = String(text || "");
+  const firstNl = s.indexOf("\n");
+  const msg = firstNl > -1 && /^\s*\d+\s*$/.test(s.slice(0, firstNl)) ? s.slice(firstNl + 1) : s; // drop the leading byte-count
+  const sep = msg.search(/\r?\n\r?\n/); // headers end at the first blank line
+  const headers = sep > -1 ? msg.slice(0, sep) : msg;
+  const field = (name) => { const m = new RegExp("^" + name + ":\\s*(.*(?:\\r?\\n[ \\t].*)*)", "im").exec(headers); return m ? m[1].replace(/\r?\n[ \t]+/g, " ").trim() : ""; };
+  const from = field("From"), to = field("To"), subj = field("Subject"), date = field("Date");
+  if (!from && !subj) return "";
+  let bodyText = sep > -1 ? msg.slice(sep) : "";
+  const plistAt = bodyText.indexOf("<?xml"); if (plistAt > -1) bodyText = bodyText.slice(0, plistAt); // strip the .emlx plist trailer
+  bodyText = bodyText.replace(/<[^>]+>/g, " ").replace(/[\s ]+/g, " ").trim().slice(0, 400);
+  let line = `Email: ${subj || "(no subject)"}`;
+  if (from) line += ` | from: ${from}`;
+  if (to) line += ` | to: ${to}`;
+  if (date) line += ` | ${date}`;
+  if (bodyText) line += ` | ${bodyText}`;
+  return line;
 }
 const SKIP_DIRS = new Set(["node_modules", ".git", ".obsidian", "dist", "build", ".next", ".cache", "__pycache__", ".venv", "venv"]);
 const MAX_FILE = 2 * 1024 * 1024; // skip files larger than 2 MB (logs/minified blobs)
@@ -178,6 +202,7 @@ export class ContextIndex {
       const ext = path.extname(f.abs).toLowerCase();
       if (ext === ".ics") content = normalizeIcs(content);        // VEVENT -> "Event: ... | when: ..."
       else if (ext === ".vcf") content = normalizeVcf(content);   // VCARD  -> "Contact: ... | email ..."
+      else if (ext === ".emlx") content = normalizeEmlx(content); // Apple Mail -> "Email: subject | from: ..."
       for (const c of chunkText(content, 120, 20)) records.push({ sourceId: null, source: f.rel, sourceType: type, text: c });
     }
     // distinguish "macOS blocked the read" (-> ask for Full Disk Access) from "genuinely empty"
@@ -185,6 +210,39 @@ export class ContextIndex {
     const vectors = await embed(records.map((r) => r.text), { onProgress });
     if (vectors.length !== records.length) throw new Error("embedding returned the wrong count");
     return { rootAbs, fileCount: files.length, records, vectors, dim: vectors[0].length };
+  }
+
+  // Build a SQLite-backed source (browser history / contacts / messages). The live DB is opened
+  // from a COPY in tmp so we never fight the app's write lock; copying a TCC-protected store throws
+  // EPERM, which we surface as NEEDS_FDA. WAL sidecars are copied too (best-effort) so the read
+  // reflects recent, not-yet-checkpointed writes. The temp copies are always cleaned up.
+  async _buildSqlite({ rootPath, type }, embed, onProgress) {
+    const rootAbs = path.resolve(rootPath);
+    const tmpDb = path.join(os.tmpdir(), `ss-${type}-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.db`);
+    const tmpFiles = [];
+    const cleanup = () => { for (const f of tmpFiles) { try { fs.unlinkSync(f); } catch { /* */ } } };
+    let rows;
+    try {
+      try { fs.copyFileSync(rootAbs, tmpDb); tmpFiles.push(tmpDb); }
+      catch (e) {
+        if (e && (e.code === "EPERM" || e.code === "EACCES")) throw new Error(NEEDS_FDA); // TCC-protected -> ask for Full Disk Access
+        if (e && e.code === "ENOENT") throw new Error("store not found: " + rootPath);
+        throw e;
+      }
+      for (const suffix of ["-wal", "-shm"]) { try { fs.copyFileSync(rootAbs + suffix, tmpDb + suffix); tmpFiles.push(tmpDb + suffix); } catch { /* sidecar optional */ } }
+      rows = readStore(type, tmpDb); // [{ source, text }]
+    } finally { cleanup(); }
+    const records = [];
+    for (const r of rows) for (const c of chunkText(r.text, 120, 20)) records.push({ sourceId: null, source: r.source, sourceType: type, text: c });
+    if (!records.length) throw new Error("no readable entries in that store");
+    const vectors = await embed(records.map((r) => r.text), { onProgress });
+    if (vectors.length !== records.length) throw new Error("embedding returned the wrong count");
+    return { rootAbs, fileCount: rows.length, records, vectors, dim: vectors[0].length };
+  }
+
+  // Build a source, dispatching on type: SQLite stores read rows, everything else walks files.
+  _build(opts, embed, onProgress) {
+    return SQLITE_TYPES.has(opts.type) ? this._buildSqlite(opts, embed, onProgress) : this._buildFolder(opts, embed, onProgress);
   }
 
   // Commit a built source into the index. Pushes in a LOOP (spread `push(...arr)` throws a
@@ -201,10 +259,11 @@ export class ContextIndex {
     return src;
   }
 
-  // Index a new folder source (build first, then commit). Returns the source meta.
+  // Index a new source (build first, then commit). A folder of files or a SQLite store, by type.
+  // Name kept as addFolderSource for back-compat with existing callers. Returns the source meta.
   async addFolderSource({ rootPath, label, type = "folder", exts = null }, embed, onProgress) {
-    if (this.findByPath(path.resolve(rootPath))) throw new Error("that folder is already a source");
-    const built = await this._buildFolder({ rootPath, type, exts }, embed, onProgress);
+    if (this.findByPath(path.resolve(rootPath))) throw new Error("that source is already indexed");
+    const built = await this._build({ rootPath, type, exts }, embed, onProgress);
     return this._commit(built, { type, label, exts });
   }
 
@@ -244,7 +303,7 @@ export class ContextIndex {
     const src = this.getSource(id);
     if (!src) throw new Error("unknown source");
     const prevDim = this.dim;
-    const built = await this._buildFolder({ rootPath: src.path, type: src.type, exts: src.exts }, embed, onProgress);
+    const built = await this._build({ rootPath: src.path, type: src.type, exts: src.exts }, embed, onProgress);
     if (prevDim && built.dim !== prevDim) throw new Error(`embedding dim changed (${built.dim} vs ${prevDim}); clear + re-index all sources`);
     // the source may have been removed while we were embedding (user delete, or a concurrent sync);
     // do NOT resurrect it. Re-fetch by id rather than trusting the stale `src` reference.
