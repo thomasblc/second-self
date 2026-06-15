@@ -489,6 +489,7 @@ async function handle(type, msg, { reply, fail, push }) {
         src = await contextIndex.addFolderSource({ rootPath: vault.root, label: path.basename(vault.root), type: "vault", exts: ["md", "markdown", "txt"] }, embedFor, onProgress);
         for (const s of contextIndex.sources.filter((x) => x.type === "vault" && x.id !== src.id)) contextIndex.removeSource(s.id); // then drop stale vault sources
       }
+      if (!src) return reply({ ingested: 0, chunks: 0 }); // reindexSource returns null if the vault source was removed mid-embed (rare race); nothing to report
       return reply({ ingested: src.docCount, chunks: src.chunkCount });
     }
     case "rag.forget": { for (const s of contextIndex.sources.filter((x) => x.type === "vault")) contextIndex.removeSource(s.id); return reply({ ok: true }); }
