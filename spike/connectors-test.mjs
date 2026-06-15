@@ -107,12 +107,19 @@ Let's lock the roadmap before the offsite. Budget is approved.
 ok(/Event: Standup \| when: 2026-06-10 09:30/.test(normalizeIcs("BEGIN:VEVENT\nSUMMARY:Standup\nDTSTART:20260610T093000Z\nEND:VEVENT")), "ics still normalizes");
 ok(/Contact: Jane Doe \| jane@x\.io/.test(normalizeVcf("BEGIN:VCARD\nFN:Jane Doe\nEMAIL:jane@x.io\nEND:VCARD")), "vcf still normalizes");
 
-// ---- 7) chunkText hard-caps a single giant token (long URL / blob) so it can't overflow the embedder ----
+// ---- 7) chunkText bounds a giant single token but leaves normal text untouched ----
 {
   const giant = "https://x.com/?" + "a".repeat(8000); // one 8000-char "word"
   const chunks = chunkText(giant, 120, 20);
-  ok(chunks.length > 1 && chunks.every((c) => c.length <= 1200), `giant single token split into ${chunks.length} capped chunks`);
-  ok(chunkText("just a few normal words here", 120, 20).length === 1, "short text stays one chunk");
+  ok(chunks.length > 1 && chunks.every((c) => c.length <= 2400), `giant single token split into ${chunks.length} bounded chunks`);
+  // normal text must be returned verbatim (no reindex churn): single chunk == original body
+  const normal = "just a few normal words here";
+  ok(chunkText(normal, 120, 20).length === 1 && chunkText(normal, 120, 20)[0] === normal, "short normal text stays one verbatim chunk");
+  // a 120-word window of moderately long words (12 chars) must NOT be re-split (was the P1 regression)
+  const dense = Array.from({ length: 240 }, () => "abcdefghijkl").join(" "); // 240 x 12-char words
+  const dc = chunkText(dense, 120, 20);
+  const denseOld = (() => { const w = dense.split(/\s+/); const out = []; const step = 100; for (let i = 0; i < w.length; i += step) { out.push(w.slice(i, i + 120).join(" ")); if (i + 120 >= w.length) break; } return out; })();
+  ok(JSON.stringify(dc) === JSON.stringify(denseOld), "dense word-chunked text matches the pre-cap chunking (no regression)");
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

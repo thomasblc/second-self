@@ -189,12 +189,23 @@ export class ModelManager {
 // Split a document into overlapping word-windowed chunks for retrieval.
 // Strips YAML front-matter, packs by paragraph up to wordsPerChunk, with a small
 // word overlap so a fact split across a boundary is still retrievable.
-// Hard character cap per chunk. The embedder rejects inputs over ~1024 tokens; a single giant
-// "word" (a long tracking URL, a base64 blob, a minified line) would otherwise ride in one chunk
-// and overflow the batch. ~1200 chars stays well under the token limit even for punctuation-dense
-// text (URLs/code tokenize to more tokens per char). Splitting on chars is lossy for such blobs
-// but keeps every source embeddable.
-const MAX_CHUNK_CHARS = 1200;
+// The embedder rejects any input over ~1024 tokens. Two guards keep every source embeddable
+// WITHOUT changing how normal word-separated text chunks (so existing vaults don't re-chunk on
+// reindex): (1) split an over-long single "word" - a long tracking URL, a base64 blob, a minified
+// line - BEFORE word-chunking, since that is what actually overflows the batch; (2) a generous
+// whole-chunk char cap as a final safety net for whitespace-sparse text (e.g. CJK, where the whole
+// line is one "word"). A normal 120-word chunk of English or code stays well under MAX_CHUNK_CHARS,
+// so it is returned byte-for-byte as before.
+const MAX_WORD_CHARS = 800;   // a single token longer than this is split before chunking
+const MAX_CHUNK_CHARS = 2400; // ~120 words x 20 chars; above this we hard-split (covers CJK / blobs)
+function splitLongWords(words) {
+  const out = [];
+  for (const w of words) {
+    if (w.length <= MAX_WORD_CHARS) out.push(w);
+    else for (let i = 0; i < w.length; i += MAX_WORD_CHARS) out.push(w.slice(i, i + MAX_WORD_CHARS));
+  }
+  return out;
+}
 function capChunk(s) {
   if (s.length <= MAX_CHUNK_CHARS) return [s];
   const out = [];
@@ -205,9 +216,13 @@ function capChunk(s) {
 export function chunkText(doc, wordsPerChunk = 120, overlap = 20) {
   const body = String(doc || "").replace(/^---\n[\s\S]*?\n---\n/, "").trim();
   if (!body) return [];
-  const words = body.split(/\s+/);
+  const rawWords = body.split(/\s+/);
+  const words = splitLongWords(rawWords); // identity unless a single token exceeds MAX_WORD_CHARS
+  // fast path: a short doc with no oversized token returns its text verbatim - byte-for-byte the
+  // same as before this guard existed, so existing indexes don't re-chunk on reindex.
+  if (words.length === rawWords.length && rawWords.length <= wordsPerChunk) return capChunk(body);
   const raw = [];
-  if (words.length <= wordsPerChunk) raw.push(body);
+  if (words.length <= wordsPerChunk) raw.push(words.join(" "));
   else {
     const step = Math.max(1, wordsPerChunk - overlap);
     for (let i = 0; i < words.length; i += step) {
@@ -215,7 +230,7 @@ export function chunkText(doc, wordsPerChunk = 120, overlap = 20) {
       if (i + wordsPerChunk >= words.length) break;
     }
   }
-  return raw.flatMap(capChunk); // sub-split any chunk that a single huge token blew past the cap
+  return raw.flatMap(capChunk); // final safety net for whitespace-sparse chunks
 }
 
 // Cosine similarity for the graph's semantic edges.

@@ -223,13 +223,14 @@ export class ContextIndex {
     const cleanup = () => { for (const f of tmpFiles) { try { fs.unlinkSync(f); } catch { /* */ } } };
     let rows;
     try {
-      try { fs.copyFileSync(rootAbs, tmpDb); tmpFiles.push(tmpDb); }
+      // COPYFILE_EXCL: fail rather than follow/clobber a pre-existing temp path (symlink hardening).
+      try { fs.copyFileSync(rootAbs, tmpDb, fs.constants.COPYFILE_EXCL); tmpFiles.push(tmpDb); }
       catch (e) {
         if (e && (e.code === "EPERM" || e.code === "EACCES")) throw new Error(NEEDS_FDA); // TCC-protected -> ask for Full Disk Access
         if (e && e.code === "ENOENT") throw new Error("store not found: " + rootPath);
         throw e;
       }
-      for (const suffix of ["-wal", "-shm"]) { try { fs.copyFileSync(rootAbs + suffix, tmpDb + suffix); tmpFiles.push(tmpDb + suffix); } catch { /* sidecar optional */ } }
+      for (const suffix of ["-wal", "-shm"]) { try { fs.copyFileSync(rootAbs + suffix, tmpDb + suffix, fs.constants.COPYFILE_EXCL); tmpFiles.push(tmpDb + suffix); } catch { /* sidecar optional */ } }
       rows = readStore(type, tmpDb); // [{ source, text }]
     } finally { cleanup(); }
     const records = [];
