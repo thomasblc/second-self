@@ -520,7 +520,7 @@ async function handle(type, msg, { reply, fail, push }) {
         src = await contextIndex.reindexSource(existing.id, embedFor, onProgress); // same vault, refresh (atomic)
       } else {
         // first index, or the vault changed: build the new one (throws before touching anything if empty),
-        src = await contextIndex.addFolderSource({ rootPath: vault.root, label: path.basename(vault.root), type: "vault", exts: ["md", "markdown", "txt"] }, embedFor, onProgress);
+        src = await contextIndex.addFolderSource({ rootPath: vault.root, label: path.basename(vault.root), type: "vault", exts: ["md", "markdown", "txt", "pdf", "docx"] }, embedFor, onProgress);
         for (const s of contextIndex.sources.filter((x) => x.type === "vault" && x.id !== src.id)) contextIndex.removeSource(s.id); // then drop stale vault sources
       }
       if (!src) return reply({ ingested: 0, chunks: 0 }); // reindexSource returns null if the vault source was removed mid-embed (rare race); nothing to report
