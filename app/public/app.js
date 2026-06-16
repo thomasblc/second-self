@@ -17,14 +17,28 @@ function request(type, payload = {}) {
     ws.send(JSON.stringify({ id, type, ...payload }));
   });
 }
+let reconnectTries = 0;
+// If the socket keeps failing to reopen (the server restarted under an old tab whose token is now
+// stale, or the server is down), tell the user plainly with a one-click reload instead of leaving
+// every action to fail with a cryptic "not connected". A reload re-fetches a fresh, valid token.
+function showReconnectBanner() {
+  if (document.getElementById("reconnect-banner")) return;
+  const b = document.createElement("div");
+  b.id = "reconnect-banner";
+  b.innerHTML = `<span>Lost connection to the local server. It may have restarted.</span><button id="reconnect-reload">Reload</button>`;
+  document.body.appendChild(b);
+  document.getElementById("reconnect-reload").onclick = () => location.reload();
+}
 function connect() {
   const tok = window.__SS_TOKEN ? "?t=" + encodeURIComponent(window.__SS_TOKEN) : "";
   ws = new WebSocket(`ws://${location.host}/${tok}`);
-  ws.onopen = () => { statusLine.innerHTML = 'connected <span class="kbd">Cmd K</span>'; };
+  ws.onopen = () => { reconnectTries = 0; document.getElementById("reconnect-banner")?.remove(); statusLine.innerHTML = 'connected <span class="kbd">Cmd K</span>'; };
   ws.onclose = () => {
     // reject every in-flight request so spinners never hang on a dropped connection (review P0-3)
     for (const [, p] of pending) { try { p.reject(new Error("connection closed")); } catch { /* */ } }
     pending.clear();
+    reconnectTries++;
+    if (reconnectTries >= 3) showReconnectBanner(); // ~4.5s of failed retries -> surface a Reload
     statusLine.textContent = "disconnected, retrying..."; setTimeout(connect, 1500);
   };
   ws.onmessage = (e) => {
