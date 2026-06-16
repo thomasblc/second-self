@@ -62,6 +62,18 @@ const dirStatus = (p) => { try { return fs.statSync(p).isDirectory() ? "dir" : "
 // Identity + environment preamble for every chat. Gives the model a stable self (so a base model
 // doesn't free-associate "I'm ChatGPT/Qwen") and awareness of what it can do here, so it can tell
 // the user how to unlock its memory/vault access instead of flatly denying it.
+// When the active vault changes, drop any indexed vault source pointing at a DIFFERENT folder, so
+// stale chunks + broken citations don't linger in Memory. A same-path setRoot (e.g. on boot) is a
+// no-op, so a previously-indexed vault survives a restart. The new vault shows as un-indexed in the
+// Memory tab until the user re-indexes it.
+function dropStaleVaultSources(newRoot) {
+  const cur = path.resolve(newRoot || "");
+  let dropped = 0;
+  for (const s of contextIndex.sources.filter((x) => x.type === "vault" && path.resolve(x.path) !== cur)) { contextIndex.removeSource(s.id); dropped++; }
+  if (dropped) broadcast({ type: "context.changed", reason: "vault-switched" });
+  return dropped;
+}
+
 function identityPrompt() {
   const name = getConfig().agentName || "Second Self";
   return `You are ${name}, a private AI assistant that runs 100% on the owner's own computer through the QVAC on-device runtime. No data ever leaves this machine; there is no cloud. You are not ChatGPT, Gemini, Claude, or any hosted assistant - your identity is ${name}, running locally on top of an open model. Speak in the owner's language. The person you are talking to is the owner of this machine.`;
@@ -349,10 +361,10 @@ async function handle(type, msg, { reply, fail, push }) {
       fs.mkdirSync(dir, { recursive: true });
       return reply({ path: dir });
     }
-    case "vault.setRoot": { const root = vault.setRoot(msg.path); rememberVault(root); invalidateCaches(); startVaultWatch(); return reply({ root, isDemo: isDemoVault() }); }
+    case "vault.setRoot": { const root = vault.setRoot(msg.path); rememberVault(root); invalidateCaches(); startVaultWatch(); dropStaleVaultSources(root); return reply({ root, isDemo: isDemoVault() }); }
     case "vault.switchVault": {
       if (!isDir(msg.path)) return fail("that folder no longer exists");
-      const root = vault.setRoot(msg.path); rememberVault(root); invalidateCaches(); startVaultWatch();
+      const root = vault.setRoot(msg.path); rememberVault(root); invalidateCaches(); startVaultWatch(); dropStaleVaultSources(root);
       return reply({ root, isDemo: isDemoVault() });
     }
     case "vault.removeVault": { forgetVault(msg.path); const c = getConfig(); return reply({ vaults: c.vaults }); }
@@ -362,7 +374,7 @@ async function handle(type, msg, { reply, fail, push }) {
       fs.mkdirSync(dir, { recursive: true });
       const welcome = path.join(dir, "Welcome.md");
       if (!fs.existsSync(welcome)) fs.writeFileSync(welcome, "# Welcome to your vault\n\nThis is your second brain. Create notes, link them with [[wikilinks]], and watch the graph grow. When you have enough notes, train a model on yourself from the Chat tab (Train your voice).\n\n- [[ideas]]\n- [[projects]]\n", "utf8");
-      vault.setRoot(dir); rememberVault(dir, msg.name); invalidateCaches(); startVaultWatch();
+      vault.setRoot(dir); rememberVault(dir, msg.name); invalidateCaches(); startVaultWatch(); dropStaleVaultSources(vault.root);
       return reply({ root: vault.root, isDemo: isDemoVault() });
     }
     case "config.get": { const c = getConfig(); return reply({ agentName: c.agentName, autoRetrain: c.autoRetrain, autoSync: c.autoSync, ui: c.ui }); }

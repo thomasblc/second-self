@@ -14,6 +14,7 @@
   "dependencies": {
     "@qvac/sdk": "^0.12.1",
     "hyperdht": "^6.32.0",
+    "pdfjs-dist": "^4.10.38",
     "ws": "^8.18.0",
     "zod": "^4.4.0"
   }

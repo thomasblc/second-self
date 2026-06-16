@@ -168,6 +168,17 @@ async function main() {
     fs.writeFileSync(path.join(extra, "cal.ics"), "BEGIN:VCALENDAR\nBEGIN:VEVENT\nSUMMARY:Quarterly budget review with Mallory\nDTSTART:20260720T100000Z\nLOCATION:HQ room 4\nEND:VEVENT\nEND:VCALENDAR\n");
     // an .emlx file (Apple Mail): normalized to an "Email: subject | from ... | body" line
     fs.writeFileSync(path.join(extra, "msg.emlx"), "210\nFrom: Trent <trent@example.com>\nTo: me@example.com\nSubject: Offsite logistics in Lisbon\nDate: Mon, 10 Jun 2026 09:00:00 +0000\n\nFlights are booked, hotel near the venue.\n<?xml version=\"1.0\"?><plist></plist>");
+    // a .docx (a stored-entry ZIP with word/document.xml): proves the binary read + extract + index path
+    const docxBytes = (() => {
+      const xml = `<?xml version="1.0"?><w:document xmlns:w="ns"><w:body><w:p><w:r><w:t>Project Atlas roadmap for the Lisbon offsite</w:t></w:r></w:p></w:body></w:document>`;
+      const data = Buffer.from(xml), nb = Buffer.from("word/document.xml");
+      const lh = Buffer.alloc(30); lh.writeUInt32LE(0x04034b50, 0); lh.writeUInt16LE(20, 4); lh.writeUInt32LE(data.length, 18); lh.writeUInt32LE(data.length, 22); lh.writeUInt16LE(nb.length, 26);
+      const ce = Buffer.alloc(46); ce.writeUInt32LE(0x02014b50, 0); ce.writeUInt16LE(20, 4); ce.writeUInt16LE(20, 6); ce.writeUInt32LE(data.length, 20); ce.writeUInt32LE(data.length, 24); ce.writeUInt16LE(nb.length, 28); ce.writeUInt32LE(0, 42);
+      const cdStart = 30 + nb.length + data.length;
+      const eocd = Buffer.alloc(22); eocd.writeUInt32LE(0x06054b50, 0); eocd.writeUInt16LE(1, 8); eocd.writeUInt16LE(1, 10); eocd.writeUInt32LE(46 + nb.length, 12); eocd.writeUInt32LE(cdStart, 16);
+      return Buffer.concat([lh, nb, data, ce, nb, eocd]);
+    })();
+    fs.writeFileSync(path.join(extra, "roadmap.docx"), docxBytes);
     const added = await req("context.addSource", { path: extra });
     ok(added.source.chunkCount > 0, `context.addSource indexed a folder (${added.source.chunkCount} chunks)`);
     const csearch = await req("context.search", { query: "how do rockets work", topK: 5 });
@@ -176,6 +187,8 @@ async function main() {
     ok(ical.hits.some((h) => h.content.includes("Mallory") && h.source.endsWith(".ics")), "calendar .ics event is normalized + retrievable");
     const mail = await req("context.search", { query: "offsite flights and hotel in Lisbon", topK: 5 });
     ok(mail.hits.some((h) => h.content.includes("Lisbon") && h.source.endsWith(".emlx")), "mail .emlx is normalized + retrievable");
+    const dx = await req("context.search", { query: "Atlas product roadmap", topK: 5 });
+    ok(dx.hits.some((h) => h.content.includes("Atlas roadmap") && h.source.endsWith(".docx")), "docx text is extracted + retrievable");
     await req("context.removeSource", { sourceId: added.source.id });
     ok(!(await req("context.sources")).sources.some((s) => s.id === added.source.id), "context.removeSource forgets the source");
     fs.rmSync(extra, { recursive: true, force: true });
@@ -193,6 +206,16 @@ async function main() {
     ok(sc.autoSync.enabled && sc.autoSync.intervalHours >= 1, "config.set autoSync sanitizes interval (>=1h)");
     await req("config.set", { autoSync: { enabled: false } }); // don't leave a background re-index scheduled
     ok((await req("config.get")).autoSync.enabled === false, "auto-sync reflects disabled");
+
+    // switching the vault drops the now-stale vault source from memory (no broken citations linger).
+    // Runs here (after the vault-source checks above) so it doesn't disturb them; restores the vault.
+    ok((await req("context.sources")).sources.some((s) => s.type === "vault"), "vault source present before switch");
+    const swV = fs.mkdtempSync(path.join(os.tmpdir(), "ss-e2e-sw-"));
+    fs.writeFileSync(path.join(swV, "x.md"), "# x\n\ntemp note");
+    await req("vault.switchVault", { path: swV });
+    ok(!(await req("context.sources")).sources.some((s) => s.type === "vault"), "switching the vault drops the stale vault source from memory");
+    await req("vault.switchVault", { path: vault }); // restore the original vault for later assertions
+    fs.rmSync(swV, { recursive: true, force: true });
 
     const cat = await req("model.catalog");
     ok(cat.models.length >= 8, `model catalog returns the curated set (${cat.models.length})`);

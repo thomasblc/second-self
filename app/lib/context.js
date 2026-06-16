@@ -17,6 +17,7 @@ import path from "node:path";
 import { cosine, chunkText } from "./models.js";
 import { CONFIG_DIR } from "./config.js";
 import { SQLITE_TYPES, readStore } from "./os-stores.js";
+import { parseDocx, parsePdf } from "./docparse.js";
 
 const DIR = path.join(CONFIG_DIR, "context");
 const META = path.join(DIR, "index.json");
@@ -30,7 +31,12 @@ export const TEXT_EXTS = new Set([
   ".json", ".yaml", ".yml", ".toml", ".ini", ".csv", ".tsv", ".html", ".css", ".xml",
   ".ics", ".vcf", // calendar events + contacts (normalized to readable lines below)
   ".emlx",        // Apple Mail messages (normalized to From/To/Subject/body lines below)
+  ".pdf", ".docx",// binary docs: text extracted via docparse (read as a buffer, not utf8)
 ]);
+
+// Formats read as a binary buffer + run through a text extractor (not utf8). Allowed a larger size
+// cap than plain text files since real PDFs/Word docs are often several MB.
+export const BINARY_EXTS = new Set([".pdf", ".docx"]);
 
 // Some macOS data lives in TCC-protected stores (Calendar, Mail, Messages...). Reading them from
 // a plain process needs Full Disk Access; without it readdir throws EPERM. We surface that as a
@@ -101,7 +107,8 @@ export function normalizeEmlx(text) {
   return line;
 }
 const SKIP_DIRS = new Set(["node_modules", ".git", ".obsidian", "dist", "build", ".next", ".cache", "__pycache__", ".venv", "venv"]);
-const MAX_FILE = 2 * 1024 * 1024; // skip files larger than 2 MB (logs/minified blobs)
+const MAX_FILE = 2 * 1024 * 1024; // skip text files larger than 2 MB (logs/minified blobs)
+const MAX_BINARY_FILE = 30 * 1024 * 1024; // pdf/docx can be bigger; still bound it
 const MAX_FILES = 20000;          // cap a runaway folder scan
 
 const rid = () => "src-" + Math.random().toString(36).slice(2, 10);
@@ -179,9 +186,10 @@ export class ContextIndex {
         const abs = path.join(dir, e.name);
         if (e.isDirectory()) { if (!SKIP_DIRS.has(e.name)) stack.push(abs); continue; }
         if (!e.isFile()) continue; // skip symlinks/sockets
-        if (!allow.has(path.extname(e.name).toLowerCase())) continue;
+        const xt = path.extname(e.name).toLowerCase();
+        if (!allow.has(xt)) continue;
         let st; try { st = fs.statSync(abs); } catch { continue; }
-        if (st.size > MAX_FILE || st.size === 0) continue;
+        if (st.size === 0 || st.size > (BINARY_EXTS.has(xt) ? MAX_BINARY_FILE : MAX_FILE)) continue;
         out.push({ rel: path.relative(rootAbs, abs), abs, mtime: st.mtimeMs });
         if (out.length >= MAX_FILES) break;
       }
@@ -198,11 +206,18 @@ export class ContextIndex {
     let { files, blocked } = this._walk(rootAbs, extSet); // blocked may also flip true on a per-file EPERM below
     const records = [];
     for (const f of files) {
-      let content; try { content = fs.readFileSync(f.abs, "utf8"); } catch (e) { if (e && (e.code === "EPERM" || e.code === "EACCES")) blocked = true; continue; }
       const ext = path.extname(f.abs).toLowerCase();
-      if (ext === ".ics") content = normalizeIcs(content);        // VEVENT -> "Event: ... | when: ..."
-      else if (ext === ".vcf") content = normalizeVcf(content);   // VCARD  -> "Contact: ... | email ..."
-      else if (ext === ".emlx") content = normalizeEmlx(content); // Apple Mail -> "Email: subject | from: ..."
+      let content;
+      if (BINARY_EXTS.has(ext)) {
+        let buf; try { buf = fs.readFileSync(f.abs); } catch (e) { if (e && (e.code === "EPERM" || e.code === "EACCES")) blocked = true; continue; }
+        try { content = ext === ".pdf" ? await parsePdf(buf) : parseDocx(buf); } catch { content = ""; } // corrupt/encrypted -> skip, never crash the build
+      } else {
+        try { content = fs.readFileSync(f.abs, "utf8"); } catch (e) { if (e && (e.code === "EPERM" || e.code === "EACCES")) blocked = true; continue; }
+        if (ext === ".ics") content = normalizeIcs(content);        // VEVENT -> "Event: ... | when: ..."
+        else if (ext === ".vcf") content = normalizeVcf(content);   // VCARD  -> "Contact: ... | email ..."
+        else if (ext === ".emlx") content = normalizeEmlx(content); // Apple Mail -> "Email: subject | from: ..."
+      }
+      if (!content) continue; // empty / image-only PDF / unreadable docx -> nothing to index
       for (const c of chunkText(content, 120, 20)) records.push({ sourceId: null, source: f.rel, sourceType: type, text: c });
     }
     // distinguish "macOS blocked the read" (-> ask for Full Disk Access) from "genuinely empty"
