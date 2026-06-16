@@ -93,7 +93,18 @@ export class ModelManager {
   // Run fn(modelId) holding the worker mutex for the WHOLE duration (load + completion), so a
   // second chat/embed can't reload/unload the slot mid-stream.
   async _withLLM(opts = {}, fn = null) {
-    return this._serialize(async () => { const id = await this._loadLLMUnlocked(opts); return fn ? await fn(id) : id; });
+    return this._serialize(async () => {
+      const id = await this._loadLLMUnlocked(opts);
+      if (!fn) return id;
+      try { return await fn(id); }
+      catch (e) {
+        // If the worker crashed (SIGSEGV/abort), this.llm still points at a dead modelId and the
+        // next same-slot request would skip reloading + fail forever. Drop the slot so the next
+        // call reloads a fresh worker.
+        if (/worker exited|in-flight calls were aborted|SIGSEGV|SIGABRT|SIGKILL/i.test(String(e?.message || e))) this.llm = null;
+        throw e;
+      }
+    });
   }
 
   // Agentic chat: the model can call vault tools (search/read/list/edit). Loops until it

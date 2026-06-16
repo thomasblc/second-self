@@ -636,11 +636,20 @@ async function handle(type, msg, { reply, fail, push }) {
       return reply({ contentText, actions, model: { baseKey, agent: true, permission } });
     }
     case "chat.send": {
-      const { message, history = [], baseKey = "1.7b", adapter = null, memory = false, voice = false } = msg;
+      const { message, history = [], adapter = null, memory = false, voice = false } = msg;
+      let baseKey = BASES[msg.baseKey] ? msg.baseKey : "1.7b";
       let lora = null;
       if (voice && adapter) {
         const found = trainer.listAdapters().find((a) => a.file === adapter || a.abs === adapter);
-        if (found) { lora = found.abs; }
+        if (found) {
+          lora = found.abs;
+          // A LoRA only fits the base it was trained on; applying it to a different base makes the
+          // llama.cpp worker SIGSEGV. Force the adapter's base so a mismatched pick can't crash it.
+          if (found.baseKey && found.baseKey !== baseKey) {
+            push({ type: "chat.warn", message: `Your voice was trained on ${found.baseKey}; running on that model (not ${baseKey}).` });
+            baseKey = found.baseKey;
+          }
+        }
       }
       let hits = [];
       let grounding = "";

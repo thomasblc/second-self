@@ -485,10 +485,23 @@ async function saveAgentName() {
 }
 $("btn-rename").onclick = saveAgentName;
 agentNameInput.onkeydown = (e) => { if (e.key === "Enter") { e.preventDefault(); saveAgentName(); agentNameInput.blur(); } };
+// A LoRA only runs on the base it was trained on, so when Voice is on the model is LOCKED to the
+// adapter's base (mixing e.g. a 1.7B adapter with Qwen3 8B crashes the worker). The picker re-opens
+// when Voice is off.
+function syncVoiceBase() {
+  if (tgVoice.checked) {
+    const o = chatAdapter.selectedOptions[0];
+    if (o && o.dataset.base) chatBase.value = o.dataset.base;
+    chatBase.disabled = true; chatBase.title = "Locked to your voice adapter's base model. Turn off Your voice to change.";
+  } else {
+    chatBase.disabled = false; chatBase.title = "";
+  }
+}
 tgVoice.onchange = () => {
   const hasAdapter = [...chatAdapter.options].some((o) => o.value);
   if (tgVoice.checked && !hasAdapter) { tgVoice.checked = false; chatAdapter.style.display = "none"; toast("Train your voice first (click 'Train your voice'), then turn on Voice.", "warn"); openTrainDrawer(); return; }
   chatAdapter.style.display = tgVoice.checked ? "" : "none";
+  syncVoiceBase();
 };
 chatAdapter.onchange = () => { const o = chatAdapter.selectedOptions[0]; if (o) chatBase.value = o.dataset.base; };
 const tgAgent = $("tg-agent"), agentPerm = $("agent-perm");
