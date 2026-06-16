@@ -12,7 +12,7 @@ function on(type, fn) { if (!listeners.has(type)) listeners.set(type, new Set())
 function request(type, payload = {}) {
   const id = "r" + (++seq);
   return new Promise((resolve, reject) => {
-    if (!ws || ws.readyState !== 1) return reject(new Error("not connected"));
+    if (!ws || ws.readyState !== 1) return reject(new Error("Reconnecting to the local server, try again in a moment."));
     pending.set(id, { resolve, reject });
     ws.send(JSON.stringify({ id, type, ...payload }));
   });

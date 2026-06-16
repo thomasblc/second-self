@@ -31,8 +31,19 @@ import { execFile } from "node:child_process";
 // The browser UI gets it injected into index.html; CLI/tests read it from the token file
 // or set SECOND_SELF_TOKEN. (A process that can read the user's files can read the token
 // too; this raises the bar against network-only local adversaries, not omnipotent ones.)
-const WS_TOKEN = process.env.SECOND_SELF_TOKEN || crypto.randomBytes(24).toString("hex");
-try { fs.mkdirSync(CONFIG_DIR, { recursive: true }); fs.writeFileSync(path.join(CONFIG_DIR, "ws-token"), WS_TOKEN, { mode: 0o600 }); } catch { /* non-fatal */ }
+// Reuse the persisted token across restarts (env override wins). A fresh token every boot would
+// orphan every already-open page (its injected token would no longer match) -> permanent
+// "not connected" until a manual reload. Persisting keeps open tabs reconnecting cleanly after a
+// restart, with no change to the threat model (this guards against network-only local adversaries;
+// a process that can read ~/.second-self can read the token regardless).
+const TOKEN_FILE = path.join(CONFIG_DIR, "ws-token");
+function loadOrCreateToken() {
+  if (process.env.SECOND_SELF_TOKEN) return process.env.SECOND_SELF_TOKEN;
+  try { const t = fs.readFileSync(TOKEN_FILE, "utf8").trim(); if (/^[a-f0-9]{32,}$/.test(t)) return t; } catch { /* no/!readable file -> mint one */ }
+  return crypto.randomBytes(24).toString("hex");
+}
+const WS_TOKEN = loadOrCreateToken();
+try { fs.mkdirSync(CONFIG_DIR, { recursive: true }); fs.writeFileSync(TOKEN_FILE, WS_TOKEN, { mode: 0o600 }); } catch { /* non-fatal */ }
 const SEGMENT_RE = /^[^/\\\x00-\x1f]+$/; // a single path segment: no separators, no control chars/NUL
 
 const APP_DIR = path.dirname(fileURLToPath(import.meta.url));
