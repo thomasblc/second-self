@@ -6,6 +6,11 @@
 // Everything runs locally; nothing leaves the machine.
 import zlib from "node:zlib";
 
+// Bounds against malicious documents (a hostile PDF/docx the user was sent, then indexed):
+const MAX_INFLATE = 64 * 1024 * 1024;   // cap a docx's inflated word/document.xml (decompression bomb)
+const MAX_DOC_CHARS = 2 * 1024 * 1024;  // cap extracted text per file so one doc can't explode the chunk/embed count
+const MAX_PDF_PAGES = 5000;             // cap the pdf.js page loop
+
 // ---- ZIP: read one entry's bytes via the central directory (handles data descriptors, unlike
 // scanning local headers, because the central dir always carries the real compressed size). ----
 function readZipEntry(buf, wantName) {
@@ -28,13 +33,15 @@ function readZipEntry(buf, wantName) {
     const localOff = buf.readUInt32LE(off + 42);
     const name = buf.toString("utf8", off + 46, off + 46 + nameLen);
     if (name === wantName) {
+      if (localOff + 30 > buf.length) return null;            // crafted offset past EOF -> bail (no over-read)
       // jump to the local header to find where the data actually starts (its name/extra lengths)
       const lNameLen = buf.readUInt16LE(localOff + 26);
       const lExtraLen = buf.readUInt16LE(localOff + 28);
       const dataStart = localOff + 30 + lNameLen + lExtraLen;
       const data = buf.subarray(dataStart, dataStart + compSize);
       if (method === 0) return data;                          // stored
-      if (method === 8) { try { return zlib.inflateRawSync(data); } catch { return null; } } // deflate
+      // cap the inflated size: a malicious docx can deflate a few MB into GBs (decompression bomb).
+      if (method === 8) { try { return zlib.inflateRawSync(data, { maxOutputLength: MAX_INFLATE }); } catch { return null; } }
       return null;
     }
     off += 46 + nameLen + extraLen + commentLen;
@@ -56,7 +63,7 @@ export function parseDocx(buf) {
     .replace(/<w:br\b[^>]*\/>/g, "\n")
     .replace(/<\/w:p>/g, "\n")          // paragraph end -> newline
     .replace(/<[^>]+>/g, "");           // drop every remaining tag
-  return decodeXmlEntities(text).replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
+  return decodeXmlEntities(text).replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim().slice(0, MAX_DOC_CHARS);
 }
 
 // pdfjs is loaded lazily (it's a heavy import) and only when a .pdf is actually indexed.
@@ -70,13 +77,16 @@ export async function parsePdf(buf) {
   const data = new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength);
   const doc = await pdfjs.getDocument({ data, disableWorker: true, isEvalSupported: false }).promise;
   const out = [];
-  for (let p = 1; p <= doc.numPages; p++) {
+  let chars = 0;
+  const pages = Math.min(doc.numPages, MAX_PDF_PAGES);
+  for (let p = 1; p <= pages; p++) {
     const page = await doc.getPage(p);
     const content = await page.getTextContent();
-    out.push(content.items.map((it) => it.str).join(" "));
-    page.cleanup();
+    const t = content.items.map((it) => it.str).join(" ");
+    out.push(t); chars += t.length; page.cleanup();
+    if (chars > MAX_DOC_CHARS) break; // stop once we have plenty (bounds huge/hostile PDFs)
   }
   try { await doc.destroy(); } catch { /* */ }
   // pdf.js joins glyph runs with spaces, leaving multi-space gaps; collapse them for clean embedding.
-  return out.join("\n\n").replace(/[ \t]{2,}/g, " ").replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
+  return out.join("\n\n").replace(/[ \t]{2,}/g, " ").replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim().slice(0, MAX_DOC_CHARS);
 }

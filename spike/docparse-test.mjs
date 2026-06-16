@@ -46,6 +46,15 @@ function buildZip(entries) {
   ok(text.includes("Budget\tapproved & signed"), "docx: tab + &amp; entity decoded");
   ok(parseDocx(Buffer.from("not a zip at all")) === "", "docx: non-zip -> '' (no throw)");
   ok(parseDocx(buildZip([["other.xml", "<x/>"]])) === "", "docx: zip without word/document.xml -> ''");
+
+  // decompression bomb: a tiny deflate entry that inflates past the cap must be skipped, not hang/OOM
+  const huge = Buffer.alloc(80 * 1024 * 1024, 0x20); // 80 MB > the 64 MB inflate cap
+  const comp = zlib.deflateRawSync(huge);
+  const nb = Buffer.from("word/document.xml");
+  const lh = Buffer.alloc(30); lh.writeUInt32LE(0x04034b50, 0); lh.writeUInt16LE(20, 4); lh.writeUInt16LE(8, 8); lh.writeUInt32LE(comp.length, 18); lh.writeUInt32LE(huge.length, 22); lh.writeUInt16LE(nb.length, 26);
+  const ce = Buffer.alloc(46); ce.writeUInt32LE(0x02014b50, 0); ce.writeUInt16LE(20, 4); ce.writeUInt16LE(8, 10); ce.writeUInt32LE(comp.length, 20); ce.writeUInt32LE(huge.length, 24); ce.writeUInt16LE(nb.length, 28); ce.writeUInt32LE(0, 42);
+  const bomb = Buffer.concat([lh, nb, comp, ce, nb, (() => { const e = Buffer.alloc(22); e.writeUInt32LE(0x06054b50, 0); e.writeUInt16LE(1, 8); e.writeUInt16LE(1, 10); e.writeUInt32LE(46 + nb.length, 12); e.writeUInt32LE(30 + nb.length + comp.length, 16); return e; })()]);
+  ok(parseDocx(bomb) === "", "docx: decompression bomb capped -> '' (not inflated to GBs)");
 }
 
 // ---- pdf (a minimal hand-built text PDF; pdf.js recovers from the loose structure) ----
