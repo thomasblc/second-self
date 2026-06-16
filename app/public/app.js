@@ -61,11 +61,12 @@ applyTheme(localStorage.getItem("ss-theme") || "dark");
 document.querySelectorAll(".theme-dot").forEach((d) => d.onclick = () => applyTheme(d.dataset.t));
 
 // ============================================================ pane switching
-const panes = { vault: "vault-pane", graph: "graph-pane", chat: "chat-pane", models: "models-pane" };
+const panes = { vault: "vault-pane", memory: "memory-pane", graph: "graph-pane", chat: "chat-pane", models: "models-pane" };
 function switchPane(name) {
   document.querySelectorAll(".rail-btn[data-pane]").forEach((x) => { const on = x.dataset.pane === name; x.classList.toggle("active", on); if (on) x.setAttribute("aria-current", "page"); else x.removeAttribute("aria-current"); });
   Object.entries(panes).forEach(([k, id]) => $(id).classList.toggle("active", k === name));
   if (name === "graph") { ensureGraph(); sizeGraph(); }
+  if (name === "memory") renderSources();
   if (name === "models") ensureModels();
   if (name === "vault" && isNarrow()) vaultPaneEl.classList.toggle("tree-open", !current); // mobile: show files if none open
 }
@@ -489,35 +490,84 @@ on("agent.tool", (m) => {
 });
 on("agent.edited", (m) => { toast("Agent edited " + m.path, "warn"); loadFiles().catch(() => {}); });
 async function ingest() {
-  const btn = $("btn-ingest");
-  if (btn) { btn.textContent = "indexing..."; btn.disabled = true; }
-  toast("Indexing your vault for memory...");
-  try { const d = await request("rag.ingest"); if (btn) btn.textContent = `indexed ${d.ingested} ✓`; toast(`Indexed ${d.ingested} notes (${d.chunks} chunks) for memory`); if ($("settings").classList.contains("show")) renderSources(); }
-  catch (e) { if (btn) btn.textContent = "index failed"; toast(e.message, "bad"); }
-  finally { if (btn) { btn.disabled = false; setTimeout(() => (btn.textContent = "Index for memory"), 2500); } }
+  toast("Indexing your documents for memory...");
+  try { const d = await request("rag.ingest"); toast(`Indexed ${d.ingested} notes (${d.chunks} chunks) for memory`); }
+  catch (e) { toast(e.message, "bad"); }
+  finally { if ($("memory-pane").classList.contains("active")) renderSources(); }
 }
-if ($("btn-ingest")) $("btn-ingest").onclick = ingest;
 // one throttle for both: show the first, the finish, and a milestone every ~1000 chunks (no spam)
 const indexProgress = (m) => { if (m.total && (m.done === m.total || m.done <= 16 || m.done % 1000 === 0)) toast(`indexing ${m.done}/${m.total}...`); };
 on("rag.progress", indexProgress);
 on("context.progress", indexProgress);
 
 // ---- personal context sources (Settings -> Memory & Sources) ----
+const MEM_ICON = { vault: "&#128214;", folder: "&#128193;", calendar: "&#128197;", mail: "&#9993;&#65039;", contacts: "&#128100;", browser: "&#127760;", messages: "&#128172;" };
+const MEM_UNIT = { vault: "notes", folder: "files", calendar: "events", mail: "emails", contacts: "contacts", browser: "pages", messages: "messages" };
+const CONNECTORS = [
+  { key: "calendar", label: "Calendar" }, { key: "mail", label: "Mail" }, { key: "contacts", label: "Contacts" },
+  { key: "browser", label: "Browser history" }, { key: "messages", label: "Messages" },
+];
+const LOW_CHUNKS = 3; // fewer than this = the source has almost no content worth recalling
 async function renderSources() {
-  const el = $("set-sources-list"); if (!el) return;
+  const body = $("mem-body"); if (!body) return;
   let d; try { d = await request("context.sources"); } catch { return; }
-  if (!d.sources.length) { el.innerHTML = `<div style="color:var(--mut);font-size:12px">No sources yet. Index your vault, or add a folder below.</div>`; return; }
-  const ICON = { vault: "&#128214;", folder: "&#128193;", calendar: "&#128197;", mail: "&#9993;&#65039;", contacts: "&#128100;", browser: "&#127760;", messages: "&#128172;" };
-  const UNIT = { vault: "files", folder: "files", calendar: "events", mail: "emails", contacts: "contacts", browser: "pages", messages: "messages" };
-  el.innerHTML = d.sources.map((s) => `
-    <div class="vault-item" data-id="${escapeHtml(s.id)}">
-      <div class="vi-main"><div class="vi-name">${ICON[s.type] || ICON.folder} ${escapeHtml(s.label)}</div>
-        <div class="vi-path">${escapeHtml(s.path)} &middot; ${s.chunkCount} chunks from ${s.docCount} ${UNIT[s.type] || "items"}</div></div>
-      <button class="btn vi-act" data-reindex="${escapeHtml(s.id)}" title="Re-index">&#8635;</button>
-      <button class="vi-remove" data-rm="${escapeHtml(s.id)}" title="Remove from memory (does not delete your data)">&times;</button>
-    </div>`).join("");
-  el.querySelectorAll("[data-reindex]").forEach((b) => b.onclick = async () => { toast("Re-indexing..."); try { await request("context.reindex", { sourceId: b.dataset.reindex }); toast("Re-indexed"); renderSources(); } catch (e) { toast(e.message, "bad"); } });
-  el.querySelectorAll("[data-rm]").forEach((b) => b.onclick = async () => { try { await request("context.removeSource", { sourceId: b.dataset.rm }); renderSources(); toast("Removed from memory"); } catch (e) { toast(e.message, "bad"); } });
+  const stats = $("mem-stats"); if (stats) stats.textContent = d.sources.length ? `${d.sources.length} source${d.sources.length === 1 ? "" : "s"} · ${d.totalChunks} chunks indexed` : "nothing indexed yet";
+  const byType = {}; for (const s of d.sources) (byType[s.type] = byType[s.type] || []).push(s);
+  const vault = (byType.vault || [])[0];
+  const lowTag = (s) => s.chunkCount < LOW_CHUNKS ? `<span class="mc-status low" title="Very little content indexed - re-index or add more">low content</span>` : "";
+
+  // 1) Your documents (the vault)
+  let html = `<div class="mem-sec-label">Your documents</div>`;
+  if (vault) {
+    html += `<div class="mem-doc">
+      <span class="md-ico">&#128214;</span>
+      <div class="md-main"><div class="md-name">${escapeHtml(vault.label)} ${lowTag(vault)}</div>
+        <div class="md-sub">${escapeHtml(vault.path)} &middot; ${vault.chunkCount} chunks from ${vault.docCount} notes</div></div>
+      <div class="mc-acts"><button class="btn" data-openeditor title="Edit these notes">Open editor</button>
+        <button class="btn" data-indexvault title="Re-embed the vault for memory">&#8635; Re-index</button></div>
+    </div>`;
+  } else {
+    html += `<div class="mem-doc"><span class="md-ico">&#128214;</span>
+      <div class="md-main"><div class="md-name">Your vault isn't indexed yet</div>
+        <div class="md-sub">Index it so the AI can recall your notes with citations.</div></div>
+      <button class="btn primary" data-indexvault>Index my documents</button></div>`;
+  }
+
+  // 2) Connectors (always shown; status reflects whether they're added)
+  html += `<div class="mem-sec-label">Connect your Mac <span style="text-transform:none;color:var(--mut)">- read-only, on-device. macOS may ask for Full Disk Access the first time.</span></div><div class="mem-grid">`;
+  for (const c of CONNECTORS) {
+    const src = (byType[c.key] || [])[0];
+    const status = src
+      ? `<span class="mc-status on">${src.docCount} ${MEM_UNIT[c.key]}</span>${lowTag(src)}`
+      : `<span class="mc-status off">Not connected</span>`;
+    const acts = src
+      ? `<button class="btn" data-reindex="${escapeHtml(src.id)}" title="Re-index">&#8635;</button><button class="btn" data-rm="${escapeHtml(src.id)}" title="Disconnect (keeps your data)">&times;</button>`
+      : `<button class="btn" data-connect="${c.key}">Connect</button>`;
+    html += `<div class="mem-card"><div class="mc-top"><span class="mc-ico">${MEM_ICON[c.key]}</span><span class="mc-name">${c.label}</span></div>
+      <div class="mc-bot">${status}<span class="mc-acts">${acts}</span></div></div>`;
+  }
+  html += `<div class="mem-card dashed" data-addfolder><span>&#10133;</span><span>Add a folder</span></div></div>`;
+
+  // 3) Added folders (user-picked, not connectors)
+  const folders = byType.folder || [];
+  if (folders.length) {
+    html += `<div class="mem-sec-label">Added folders</div><div class="mem-grid">`;
+    for (const s of folders) {
+      html += `<div class="mem-card"><div class="mc-top"><span class="mc-ico">&#128193;</span><span class="mc-name">${escapeHtml(s.label)}</span></div>
+        <div class="mc-bot"><span class="mc-status on">${s.chunkCount} chunks</span>${lowTag(s)}<span class="mc-acts">
+          <button class="btn" data-reindex="${escapeHtml(s.id)}" title="Re-index">&#8635;</button><button class="btn" data-rm="${escapeHtml(s.id)}" title="Remove (keeps your files)">&times;</button></span></div></div>`;
+    }
+    html += `</div>`;
+  }
+  body.innerHTML = html;
+
+  // wiring
+  body.querySelector("[data-openeditor]")?.addEventListener("click", () => switchPane("vault"));
+  body.querySelectorAll("[data-indexvault]").forEach((b) => b.onclick = () => ingest());
+  body.querySelectorAll("[data-connect]").forEach((b) => b.onclick = () => addPresetFlow(b.dataset.connect));
+  body.querySelector("[data-addfolder]")?.addEventListener("click", () => addSourceFlow());
+  body.querySelectorAll("[data-reindex]").forEach((b) => b.onclick = async () => { toast("Re-indexing..."); try { await request("context.reindex", { sourceId: b.dataset.reindex }); toast("Re-indexed"); renderSources(); } catch (e) { toast(e.message, "bad"); } });
+  body.querySelectorAll("[data-rm]").forEach((b) => b.onclick = async () => { try { await request("context.removeSource", { sourceId: b.dataset.rm }); renderSources(); toast("Removed from memory"); } catch (e) { toast(e.message, "bad"); } });
 }
 // add a context source; on a macOS permission block, open the Full Disk Access flow with a retry.
 async function indexSource(payload, label) {
@@ -530,9 +580,8 @@ async function addSourceFlow() {
   if (!dir) return;
   indexSource({ path: dir }, "folder");
 }
-function addCalendarFlow() { indexSource({ preset: "calendar" }, "Apple Calendar"); }
 // macOS store connectors: all flow through indexSource, which opens the Full Disk Access modal on a TCC block.
-const PRESET_LABELS = { mail: "Apple Mail", contacts: "Contacts", browser: "Browser history", messages: "Messages" };
+const PRESET_LABELS = { calendar: "Apple Calendar", mail: "Apple Mail", contacts: "Contacts", browser: "Browser history", messages: "Messages" };
 function addPresetFlow(preset) { indexSource({ preset }, PRESET_LABELS[preset] || preset); }
 
 // ---- Full Disk Access modal (macOS) ----
@@ -545,7 +594,7 @@ $("fda-open").onclick = () => { request("system.openSettings").catch(() => {}); 
 $("fda-retry").onclick = () => { closeFda(); const r = fdaRetry; fdaRetry = null; if (r) r(); };
 on("context.synced", (m) => { if (m.sources > 0) { toast(`Memory refreshed: ${m.sources} source${m.sources === 1 ? "" : "s"} re-indexed.`); renderSources(); } });
 on("context.syncSkip", (m) => toast(/FULL_DISK_ACCESS_REQUIRED/.test(m.reason)
-  ? `Sync skipped "${m.source}": needs Full Disk Access. Open Settings > Memory to grant it.`
+  ? `Sync skipped "${m.source}": needs Full Disk Access. Re-connect it from the Memory tab to grant it.`
   : `Sync skipped "${m.source}": ${m.reason}`, "warn"));
 on("chat.token", (m) => { if (curAssistantEl) { curAssistantEl._raw += m.text; curAssistantEl.querySelector(".body").innerHTML = renderMarkdown(curAssistantEl._raw); messages.scrollTop = messages.scrollHeight; } });
 on("chat.warn", (m) => toast(m.message, "warn"));
@@ -867,7 +916,6 @@ function setSettingsTab(tab) {
   settings.querySelectorAll(".stab").forEach((t) => t.classList.toggle("active", t.dataset.tab === tab));
   settings.querySelectorAll(".spane").forEach((p) => p.classList.toggle("active", p.dataset.tab === tab));
   if (tab === "vault") renderVaultList($("set-vault-list"));
-  if (tab === "memory") renderSources();
   if (tab === "devices") refreshDevicesStatus();
 }
 $("btn-settings").onclick = () => openSettings();
@@ -875,13 +923,8 @@ $("settings-close").onclick = closeSettings;
 settings.addEventListener("click", (e) => { if (e.target === settings) closeSettings(); });
 settings.querySelectorAll(".stab").forEach((t) => t.onclick = () => setSettingsTab(t.dataset.tab));
 $("set-onboard").onclick = () => { closeSettings(); startOnboarding(true); };
-$("set-ingest").onclick = () => ingest(); // stay in Settings so the source list updates in place
-$("set-addsource").onclick = addSourceFlow;
-$("set-addcal").onclick = addCalendarFlow;
-$("set-addmail").onclick = () => addPresetFlow("mail");
-$("set-addcontacts").onclick = () => addPresetFlow("contacts");
-$("set-addbrowser").onclick = () => addPresetFlow("browser");
-$("set-addmessages").onclick = () => addPresetFlow("messages");
+$("set-addsource").onclick = addSourceFlow; // "Add a folder" lives in the Memory tab footer now
+$("btn-manage-memory").onclick = () => switchPane("memory"); // from the chat panel -> the sources hub
 $("set-open").onclick = () => { closeSettings(); openVaultFlow(); };
 $("set-newvault").onclick = () => { closeSettings(); createVaultFlow(); };
 $("set-import").onclick = () => { closeSettings(); importCloudFlow(); };

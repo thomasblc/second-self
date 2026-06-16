@@ -20,6 +20,7 @@
     </button>
 
     <button class="rail-btn active" data-pane="vault" title="Documents" aria-label="Documents" aria-current="page"><span class="ico">&#128221;</span><span class="lbl">Documents</span></button>
+    <button class="rail-btn" data-pane="memory" title="Memory" aria-label="Memory: what your AI can recall"><span class="ico">&#129504;</span><span class="lbl">Memory</span></button>
     <button class="rail-btn" data-pane="graph" title="Graph" aria-label="Knowledge graph"><span class="ico">&#128376;</span><span class="lbl">Graph</span></button>
     <button class="rail-btn" data-pane="chat" title="Chat & Train" aria-label="Chat and train"><span class="ico">&#128172;</span><span class="lbl">Chat &amp; Train</span></button>
     <button class="rail-btn" data-pane="models" title="Models" aria-label="Models"><span class="ico">&#128230;</span><span class="lbl">Models</span></button>
@@ -131,7 +132,7 @@
           <select id="agent-perm" class="cs-select" style="display:none"><option value="read">read-only</option><option value="edit">read + edit</option></select>
         </div>
         <div class="cs-actions">
-          <button class="btn" id="btn-ingest" title="Embed your notes on-device so Your memory can retrieve real facts from them">Index for memory</button>
+          <button class="btn" id="btn-manage-memory" title="Manage what your AI can recall: your documents + connected Mac sources">&#129504; Manage memory</button>
           <button class="btn" id="btn-train-open" title="Fine-tune a model on your own notes">&#129516; Train your voice</button>
         </div>
         <div id="chat-model-state" class="cs-state"></div>
@@ -195,6 +196,23 @@
         <div id="models-list"><div class="empty">loading catalog...</div></div>
       </div>
     </section>
+
+    <!-- MEMORY (sources hub) -->
+    <section class="pane" id="memory-pane">
+      <div class="mem-wrap">
+        <div class="mem-head">
+          <h2>Memory</h2>
+          <p>What your AI can recall when you turn on <b>Memory</b> in Chat. Everything is embedded on-device; nothing is uploaded. <span id="mem-stats" class="mem-stats"></span></p>
+        </div>
+        <div id="mem-body"><div class="empty">loading sources...</div></div>
+        <div class="mem-foot">
+          <button class="btn primary" id="set-addsource">&#10133; Add a folder as a source</button>
+          <label class="toggle" style="color:var(--fg)"><input type="checkbox" id="tg-autosync"> Keep sources fresh (re-index automatically)
+            <select id="autosync-interval" class="num" style="display:none"><option value="6">every 6h</option><option value="12">every 12h</option><option value="24" selected>daily</option></select>
+          </label>
+        </div>
+      </div>
+    </section>
   </div>
 </div>
 
@@ -224,7 +242,6 @@
     <nav class="settings-tabs" id="settings-tabs">
       <button class="stab active" data-tab="general">General</button>
       <button class="stab" data-tab="vault">Vault</button>
-      <button class="stab" data-tab="memory">Memory &amp; Sync</button>
       <button class="stab" data-tab="devices">Devices</button>
       <button class="stab" data-tab="about">About</button>
     </nav>
@@ -262,41 +279,6 @@
         <div class="set-row">
           <div class="set-info"><b>Import ChatGPT / Claude chats</b><span>Turn your exported conversations into notes you can search and train on.</span></div>
           <button class="btn" id="set-import">Import...</button>
-        </div>
-      </div>
-
-      <!-- Memory & Sync -->
-      <div class="spane" data-tab="memory">
-        <div class="set-row col">
-          <div class="set-info"><b>Sources your AI can recall</b><span>Everything here is embedded on-device so the chat's <b>Memory</b> toggle can retrieve real facts with citations. Your vault is the first source; add folders of documents to widen what it knows. Nothing is uploaded.</span></div>
-          <div id="set-sources-list" class="vault-list"></div>
-        </div>
-        <div class="set-row">
-          <div class="set-info"><b>Index this vault for memory</b><span>(Re)index the current vault as your first source. Re-run after adding a lot of notes.</span></div>
-          <button class="btn" id="set-ingest">Index vault</button>
-        </div>
-        <div class="set-row">
-          <div class="set-info"><b>Add a folder as a source</b><span>Point the AI at a folder of documents (markdown, text, code). Read-only, indexed locally.</span></div>
-          <button class="btn primary" id="set-addsource">Add folder...</button>
-        </div>
-        <div class="set-row col">
-          <div class="set-info"><b>Connect your Mac</b><span>Index a native macOS source on-device so the AI knows your real life ("when am I seeing Marco?", "what was I researching?"). Each is read-only; macOS asks for Full Disk Access the first time for protected stores. Nothing is uploaded. You choose what to add.</span></div>
-          <div class="row" style="gap:8px; flex-wrap:wrap; margin-top:8px">
-            <button class="btn" id="set-addcal" title="Index your calendar events (~/Library/Calendars)">&#128197; Calendar</button>
-            <button class="btn" id="set-addmail" title="Index your Apple Mail messages (subject, sender, snippet)">&#9993;&#65039; Mail</button>
-            <button class="btn" id="set-addcontacts" title="Index your address book (name, org, email, phone)">&#128100; Contacts</button>
-            <button class="btn" id="set-addbrowser" title="Index your browser history (page titles + URLs + dates)">&#127760; Browser history</button>
-            <button class="btn" id="set-addmessages" title="Index your Messages. Read on-device only; nothing leaves your Mac.">&#128172; Messages</button>
-          </div>
-        </div>
-        <div class="set-row">
-          <div class="set-info"><b>Keep sources fresh</b><span>Re-index your sources automatically so memory stays near-live (good for the calendar). Runs in the background.</span></div>
-          <label class="toggle" style="color:var(--fg)"><input type="checkbox" id="tg-autosync"> auto
-            <select id="autosync-interval" class="num" style="display:none"><option value="6">6h</option><option value="12">12h</option><option value="24" selected>daily</option></select>
-          </label>
-        </div>
-        <div class="set-row col">
-          <div class="set-info"><b>Vault sync</b><span>Your notes are plain <code>.md</code> files on disk. If your vault folder lives in iCloud, Dropbox, or a git repo, those tools sync it across devices, and Second Self picks up external edits automatically (no save button needed). There is no Second Self cloud: nothing is uploaded.</span></div>
         </div>
       </div>
 
