@@ -4,11 +4,23 @@
 // this process tree (the SDK worker is a child process), wall-clock timing, and the
 // exact adapter filename + size from outputParametersDir (hard rule 8).
 // Usage: node spike/finetune.js [--data bootstrap|whatsapp] [--epochs 2]
-// NOTE: the finetuner only accepts F32/F16/Q4_0/Q8_0/TQ quants. Q4_K_M is REJECTED
-// (file_type=15). EVERY Qwen3-4B/8B constant in the SDK is Q4_K_M (even the "Q4_0 shard"
-// reports file_type=15), so they CANNOT be fine-tuned. The only Q8_0 4B is MedGemma (a
-// MEDICAL Gemma-3-4B) which we intentionally do NOT offer as a personal-voice base. So the
-// confirmed, relevant fine-tunable bases are Qwen3 0.6B + 1.7B (genuine Q4_0).
+// FINETUNE GATES (two independent ones, both probed live on this Mac 2026-06-17):
+//   1. Quant: accepts F32/F16/Q4_0/Q8_0/TQ1_0/TQ2_0; REJECTS Q4_K_M with
+//      "Finetuning is not supported for this quantization type (file_type=15)".
+//   2. Architecture: Qwen3 + BitNet accepted; Llama REJECTED with
+//      "Finetuning is not supported for architecture: llama".
+// Probe results (verbatim finetune() outcomes):
+//   QWEN3_1_7B_INST_Q4 (Q4_0, Qwen3)        -> PASS (first train step, loss 8.529)
+//   BITNET_B1_58_3B_INST_TQ2_0 (TQ2_0)      -> trained (adapter on disk; a 3B trains fine)
+//   LLAMA_3_2_1B_INST_Q4_0 (Q4_0, Llama)    -> FAIL: architecture llama (quant ok, arch not)
+//   QWEN3_4B_INST_Q4_SHARD                  -> FAIL: file_type=15 (registry filename says
+//                                              "Qwen3-4B-Q4_0-..." but the GGUF header is Q4_K_M)
+//   QWEN3_4B_INST_Q4_K_M / QWEN3_8B_INST_Q4_K_M -> FAIL: file_type=15
+// So it is NOT a size cap (a 3B trains): the blocker is that EVERY Qwen3-4B/8B build shipped in
+// the SDK registry is Q4_K_M. A Qwen3-4B/8B in Q4_0 or Q8_0 should train (Qwen3 arch is accepted).
+// MedGemma-4B (Gemma-3-4B, Q8_0) is plausibly fine-tunable (Gemma arch + Q8_0 both accepted) but
+// it's medical so we don't use it, and that specific claim is NOT re-verified here.
+// Confirmed production-relevant fine-tunable bases: Qwen3 0.6B + 1.7B (genuine Q4_0).
 import { finetune, loadModel, unloadModel, QWEN3_600M_INST_Q4, QWEN3_1_7B_INST_Q4, BITNET_B1_58_3B_INST_TQ2_0 } from "@qvac/sdk";
 import os from "node:os";
 import fs from "node:fs";

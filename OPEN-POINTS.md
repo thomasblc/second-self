@@ -2,7 +2,7 @@
 
 Things deliberately left open, with enough context to act on cold. Nothing here blocks shipping the app today.
 
-## 1. Fine-tuning a base bigger than 1.7B
+## 1. Fine-tuning above 1.7B is a QUANT gate, not a size limit
 
 **Status:** Fine-tuning SOLVED for a non-medical base — **BitNet-b1.58 3B (TQ2_0)** probe-passed the
 fine-tune gate AND a full real-data run completed correctly (2026-06-14: 2210 steps, train loss
@@ -17,14 +17,22 @@ it loads but does not finish a tiny generation within 90s (unusably slow). So Bi
 fast). Ask for the QVAC team: make BitNet TQ2_0 completion usable at a normal context (the overflow at
 ctx 4096 for a tiny prompt looks like a context-reservation bug specific to this quant/arch).
 
-**What we found (exhaustively probed, see `spike/probe-finetune.mjs` + memory):** the SDK finetuner gates on BOTH architecture and quantization:
-- Accepted quant: `F32 / F16 / Q4_0 / Q8_0 / TQ1_0 / TQ2_0`. **`Q4_K_M` (file_type 15) and `Q4_1` (file_type 3) are rejected.**
-- Accepted architectures observed: **Qwen3, Gemma**. **Llama is rejected** (`Finetuning is not supported for architecture: llama`).
-- Filenames lie: `QWEN3_4B_INST_Q4_SHARD` ("Q4_0") is actually Q4_K_M; `SALAMANDRATA_2B_INST_Q4` ("q4") is actually Q4_1. Always probe, don't trust the label.
+**The finetuner has TWO independent gates (both probed live 2026-06-17, `finetune()` on a Mac):**
+1. **Quant:** accepts `F32 / F16 / Q4_0 / Q8_0 / TQ1_0 / TQ2_0`; **rejects `Q4_K_M`** with `Finetuning is not supported for this quantization type (file_type=15)`.
+2. **Architecture:** Qwen3 + BitNet accepted; **Llama rejected** (`Finetuning is not supported for architecture: llama`).
 
-**Consequence:** the only **relevant, general-purpose, fine-tunable** bases in the current SDK are **Qwen3 0.6B and 1.7B** (genuine Q4_0). Every Qwen3 4B/8B build is Q4_K_M (not fine-tunable). The only fine-tunable ~4B is `MEDGEMMA_4B_IT_Q8_0` — a **medical** Gemma-3-4B, which we do not use as a personal-voice base (and its run also destabilized: train loss 2.5 -> 3.9 over one epoch). So **Qwen3-1.7B is the production voice** (proven GO, coherent in-register, shipped in the Voice picker).
+| Constant | Quant | Arch | `finetune()` live result |
+|---|---|---|---|
+| `QWEN3_1_7B_INST_Q4` | Q4_0 | Qwen3 | PASS (first train step, loss 8.529) |
+| `BITNET_B1_58_3B_INST_TQ2_0` | TQ2_0 | BitNet | trained (adapter on disk; a 3B trains) |
+| `LLAMA_3_2_1B_INST_Q4_0` | Q4_0 | Llama | FAIL: architecture llama (quant ok, arch not) |
+| `QWEN3_4B_INST_Q4_SHARD` | header=15 | Qwen3 | FAIL: file_type=15 |
+| `QWEN3_4B_INST_Q4_K_M` | Q4_K_M | Qwen3 | FAIL: file_type=15 |
+| `QWEN3_8B_INST_Q4_K_M` | Q4_K_M | Qwen3 | FAIL: file_type=15 |
 
-**Largest fine-tunable base today = BitNet-b1.58 3B (TQ2_0), non-medical, wired in.** For a fine-tunable **4B/8B Qwen3** specifically, the ask for the QVAC team: publish Qwen3-4B/8B in a fine-tunable quant (Q4_0 or Q8_0), and/or add Llama-architecture fine-tune support. The moment such a constant exists, wiring it is a one-liner: add it to `BASES` in `spike/finetune.js` + `app/lib/models.js` and to `CURATED` (group `voice`, `fineTunable:true`) in `app/lib/catalog.js`. The training pipeline, supervisor, and Voice toggle already handle any base generically (as BitNet-3B just proved).
+**It is NOT a size cap** (a 3B trains). The blocker: **every Qwen3-4B/8B build in the SDK registry is Q4_K_M**, including `QWEN3_4B_INST_Q4_SHARD` whose registryPath is `.../Qwen3-4B-Q4_0-00001-of-00005.gguf` (filename says Q4_0, GGUF header reports Q4_K_M = file_type 15). A Qwen3-4B/8B in a genuine Q4_0 or Q8_0 build should fine-tune (Qwen3 arch is accepted, as 1.7B proves). NOTE on `MEDGEMMA_4B_IT_Q8_0` (Gemma-3-4B, Q8_0): plausibly fine-tunable (Gemma arch + Q8_0 are both accepted) but it's medical so we don't use it, and that specific claim is NOT verified (no adapter on disk). Earlier notes also recorded a divergent MedGemma run (loss 2.5 -> 3.9) but that too is unverified here. **So Qwen3-1.7B is the production voice** (proven PASS, shipped in the Voice picker).
+
+**Largest fine-tunable base today = BitNet-b1.58 3B (TQ2_0), non-medical, wired in.** Asks for the QVAC SDK team (Slack-ready): (1) publish Qwen3-4B/8B in a fine-tunable quant (Q4_0 or Q8_0); (2) fix the mislabeled `QWEN3_4B_INST_Q4_SHARD` (path says Q4_0, header is Q4_K_M); (3) confirm whether `loadModel`/`finetune` accept a self-supplied GGUF via `modelSrc` (local path or arbitrary HF ref) so we could quantize our own Q8_0 Qwen3-4B meanwhile (docs say "any llama.cpp-compatible `*.gguf`" but examples only use named constants); (4) nice-to-have: Llama-architecture fine-tune support. The moment a fine-tunable 4B/8B constant exists, wiring it is a one-liner: add it to `BASES` in `spike/finetune.js` + `app/lib/models.js` and to `CURATED` (group `voice`, `fineTunable:true`) in `app/lib/catalog.js`. The pipeline, supervisor, and Voice toggle already handle any base generically (as BitNet-3B proved). Canonical call pattern: `loadModel({modelSrc, modelType:"llm"})` then `finetune({modelId, options})`, see `node_modules/@qvac/sdk/dist/examples/finetune/llamacpp-finetune.js`.
 
 ## 2. Phase 6 product polish (nice-to-have)
 - Turing game ("guess who wrote it: you vs your model") + shareable result card.
