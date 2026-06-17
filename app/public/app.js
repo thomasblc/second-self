@@ -886,11 +886,12 @@ async function browse(target) {
   }
   if (!list.children.length) list.innerHTML = `<div class="empty" style="padding:24px">nothing here</div>`;
 }
-function pickPath({ title, mode = "folder", ext = null }) {
+function pickPath({ title, mode = "folder", ext = null, useLabel = "Use this folder" }) {
   if (pickerState.resolve) { const prev = pickerState.resolve; pickerState.resolve = null; prev(null); } // resolve a leftover picker
   return new Promise((resolve) => {
     pickerState = { resolve, mode, ext, path: null, parent: null, home: null };
     $("picker-title").textContent = title;
+    $("picker-use").textContent = useLabel; // context-specific: "use AS the vault" vs "create one INSIDE"
     $("picker-use").style.display = mode === "folder" ? "" : "none";
     $("picker-newfolder").style.display = mode === "folder" ? "" : "none";
     picker.classList.add("show");
@@ -910,7 +911,7 @@ picker.addEventListener("click", (e) => { if (e.target === picker) finishPick(nu
 
 async function openVaultFlow() {
   if (!await confirmDiscard()) return;
-  const dir = await pickPath({ title: "Open a folder as your vault", mode: "folder" });
+  const dir = await pickPath({ title: "Open an existing folder as your vault", mode: "folder", useLabel: "Use this folder as my vault" });
   if (!dir) return;
   await leaveMasterIfConnected();
   try { await request("vault.switchVault", { path: dir }); resetVaultState(); await loadFiles(); await updateVaultChip(); toast("Vault: " + dir); }
@@ -918,9 +919,9 @@ async function openVaultFlow() {
 }
 async function createVaultFlow() {
   if (!await confirmDiscard()) return;
-  const parent = await pickPath({ title: "Choose where to create the new vault", mode: "folder" });
+  const parent = await pickPath({ title: "Choose where to create a NEW (empty) vault folder", mode: "folder", useLabel: "Create new vault in this folder" });
   if (!parent) return;
-  const name = prompt("Name your new vault folder:", "my-vault"); if (!name) return;
+  const name = prompt("Name for the new vault folder (a new empty subfolder is created here; to use an existing folder instead, cancel and pick \"Open a folder as a vault\"):", "my-vault"); if (!name) return;
   const full = parent.replace(/\/+$/, "") + "/" + name;
   await leaveMasterIfConnected();
   try { await request("vault.createVault", { path: full, name }); resetVaultState(); await loadFiles(); await updateVaultChip(); toast("New vault created at " + full); }
