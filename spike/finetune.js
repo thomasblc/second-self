@@ -16,11 +16,14 @@
 //   QWEN3_4B_INST_Q4_SHARD                  -> FAIL: file_type=15 (registry filename says
 //                                              "Qwen3-4B-Q4_0-..." but the GGUF header is Q4_K_M)
 //   QWEN3_4B_INST_Q4_K_M / QWEN3_8B_INST_Q4_K_M -> FAIL: file_type=15
-// So it is NOT a size cap (a 3B trains): the blocker is that EVERY Qwen3-4B/8B build shipped in
-// the SDK registry is Q4_K_M. A Qwen3-4B/8B in Q4_0 or Q8_0 should train (Qwen3 arch is accepted).
-// MedGemma-4B (Gemma-3-4B, Q8_0) is plausibly fine-tunable (Gemma arch + Q8_0 both accepted) but
-// it's medical so we don't use it, and that specific claim is NOT re-verified here.
-// Confirmed production-relevant fine-tunable bases: Qwen3 0.6B + 1.7B (genuine Q4_0).
+// So it is NOT a size cap (a 3B trains): the blocker is only that EVERY Qwen3-4B/8B build shipped
+// as an SDK constant is Q4_K_M. PROVEN FIX 2026-06-17: modelSrc accepts a LOCAL gguf path (see the
+// SDK's own examples/llamacpp-filesystem.js), so a genuine Q4_0 Qwen3-4B-Instruct (unsloth, 2.2GB)
+// loaded via loadModel({ modelSrc: "/path/to.gguf", modelType: "llm" }) FINE-TUNES (first step,
+// loss 7.538, on the 1105-row set). To wire a 4B voice: add a base here + in app/lib/models.js
+// pointing at a local Q4_0 gguf path (not an SDK constant). SDK team confirmed local files are fine
+// and they may add Q4_0/Q8_0 4B/8B registry constants later. MedGemma-4B (Q8_0) is plausibly
+// fine-tunable but medical + NOT verified, so unused. Shipped production voice: Qwen3 1.7B (Q4_0).
 import { finetune, loadModel, unloadModel, QWEN3_600M_INST_Q4, QWEN3_1_7B_INST_Q4, BITNET_B1_58_3B_INST_TQ2_0 } from "@qvac/sdk";
 import os from "node:os";
 import fs from "node:fs";
