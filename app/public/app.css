@@ -325,6 +325,16 @@ select, .num { background: var(--bg); border: 1px solid var(--line); color: var(
 .feature-grid .f { background: var(--bg3); border-radius: 10px; padding: 12px; }
 .feature-grid .f .i { font-size: 20px; } .feature-grid .f b { display: block; margin: 6px 0 2px; font-size: 13px; } .feature-grid .f span { color: var(--mut); font-size: 11px; }
 
+#index-status { position: fixed; bottom: 16px; left: 16px; z-index: 60; display: none; align-items: center; gap: 9px; background: var(--bg2); border: 1px solid var(--line); border-left: 3px solid var(--accent); border-radius: 10px; padding: 9px 13px; font: inherit; font-size: 12px; color: var(--fg); box-shadow: var(--shadow); cursor: pointer; max-width: 340px; text-align: left; }
+#index-status.show { display: inline-flex; animation: rise .2s ease; }
+#index-status.err { border-left-color: #ff6b6b; }
+.is-spin { width: 13px; height: 13px; border: 2px solid var(--line); border-top-color: var(--accent); border-radius: 50%; animation: spin .8s linear infinite; flex: none; }
+#index-status.done .is-spin { border: 2px solid transparent; animation: none; }
+#index-status.done .is-spin::before { content: "\2713"; color: var(--accent); font-size: 14px; }
+#index-status.err .is-spin { border: 2px solid transparent; animation: none; }
+#index-status.err .is-spin::before { content: "\26A0"; color: #ff6b6b; font-size: 13px; }
+.is-text { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+@media (prefers-reduced-motion: reduce) { .is-spin { animation: none; } }
 #toasts { position: fixed; bottom: 40px; right: 16px; display: flex; flex-direction: column; gap: 8px; z-index: 60; }
 .toast { background: var(--bg2); border: 1px solid var(--line); border-left: 3px solid var(--accent); border-radius: 8px; padding: 10px 14px; font-size: 13px; box-shadow: var(--shadow); animation: rise .25s ease; max-width: 320px; }
 .toast.bad { border-left-color: var(--bad); } .toast.warn { border-left-color: var(--warn); }

@@ -1,12 +1,16 @@
 // Unit test for the ContextIndex: add a folder source, search (cited), persist+reload, remove.
-// Run with an isolated config dir: SECOND_SELF_CONFIG_DIR=$(mktemp -d) node spike/context-index-test.mjs
-import { ContextIndex } from "../app/lib/context.js";
-import { ModelManager } from "../app/lib/models.js";
+// SELF-ISOLATING: forces SECOND_SELF_CONFIG_DIR to a fresh temp dir BEFORE the app modules load,
+// so the test can never read or mutate the user's real ~/.second-self/context store (the prod store).
+// (context.js resolves its storage paths from CONFIG_DIR at import time, hence the env-then-dynamic-import.)
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { DatabaseSync } from "node:sqlite";
+
+process.env.SECOND_SELF_CONFIG_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "ss-ctx-test-"));
+const { ContextIndex } = await import("../app/lib/context.js");
+const { ModelManager } = await import("../app/lib/models.js");
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const SAMPLE = path.join(ROOT, "app", "sample-vault");

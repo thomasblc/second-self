@@ -541,16 +541,34 @@ on("agent.tool", (m) => {
   act.appendChild(line); messages.scrollTop = messages.scrollHeight;
 });
 on("agent.edited", (m) => { toast("Agent edited " + m.path, "warn"); loadFiles().catch(() => {}); });
-async function ingest() {
-  toast("Indexing your documents for memory...");
-  try { const d = await request("rag.ingest"); toast(`Indexed ${d.ingested} notes (${d.chunks} chunks) for memory`); }
-  catch (e) { toast(e.message, "bad"); }
-  finally { if ($("memory-pane").classList.contains("active")) renderSources(); }
+// ---- global indexing status chip: visible from any tab so indexing never looks "stuck" ----
+let indexHideTimer = null;
+function indexStatus(text, state) { // state: "busy" | "done" | "err"
+  const el = $("index-status"); if (!el) return;
+  clearTimeout(indexHideTimer);
+  $("index-status-text").textContent = text;
+  el.classList.remove("done", "err");
+  if (state === "done" || state === "err") el.classList.add(state);
+  el.classList.add("show");
+  if (state === "done") indexHideTimer = setTimeout(() => el.classList.remove("show"), 3500);
+  else if (state === "err") indexHideTimer = setTimeout(() => el.classList.remove("show"), 7000);
 }
-// one throttle for both: show the first, the finish, and a milestone every ~1000 chunks (no spam)
-const indexProgress = (m) => { if (m.total && (m.done === m.total || m.done <= 16 || m.done % 1000 === 0)) toast(`indexing ${m.done}/${m.total}...`); };
+$("index-status").onclick = () => switchPane("memory");
+// live progress for BOTH vault (rag) and connector (context) indexing, across the scan + embed phases
+const PHASE_TXT = { scanning: "Reading documents", reading: "Reading documents", embedding: "Embedding chunks" };
+const indexProgress = (m) => {
+  const label = PHASE_TXT[m.phase] || "Indexing";
+  indexStatus(m.total ? `${label} ${m.done} / ${m.total}` : `${label}...`, "busy");
+};
 on("rag.progress", indexProgress);
 on("context.progress", indexProgress);
+
+async function ingest() {
+  indexStatus("Indexing your documents for memory...", "busy");
+  try { const d = await request("rag.ingest"); indexStatus(`Indexed ${d.ingested} docs (${d.chunks} chunks) for memory`, "done"); }
+  catch (e) { indexStatus("Indexing failed: " + e.message, "err"); toast(e.message, "bad"); }
+  finally { if ($("memory-pane").classList.contains("active")) renderSources(); }
+}
 
 // ---- personal context sources (Settings -> Memory & Sources) ----
 const MEM_ICON = { vault: "&#128214;", folder: "&#128193;", calendar: "&#128197;", mail: "&#9993;&#65039;", contacts: "&#128100;", browser: "&#127760;", messages: "&#128172;" };
@@ -618,14 +636,14 @@ async function renderSources() {
   body.querySelectorAll("[data-indexvault]").forEach((b) => b.onclick = () => ingest());
   body.querySelectorAll("[data-connect]").forEach((b) => b.onclick = () => addPresetFlow(b.dataset.connect));
   body.querySelector("[data-addfolder]")?.addEventListener("click", () => addSourceFlow());
-  body.querySelectorAll("[data-reindex]").forEach((b) => b.onclick = async () => { toast("Re-indexing..."); try { await request("context.reindex", { sourceId: b.dataset.reindex }); toast("Re-indexed"); renderSources(); } catch (e) { toast(e.message, "bad"); } });
+  body.querySelectorAll("[data-reindex]").forEach((b) => b.onclick = async () => { indexStatus("Re-indexing...", "busy"); try { await request("context.reindex", { sourceId: b.dataset.reindex }); indexStatus("Re-indexed", "done"); renderSources(); } catch (e) { indexStatus("Re-index failed: " + e.message, "err"); toast(e.message, "bad"); } });
   body.querySelectorAll("[data-rm]").forEach((b) => b.onclick = async () => { try { await request("context.removeSource", { sourceId: b.dataset.rm }); renderSources(); toast("Removed from memory"); } catch (e) { toast(e.message, "bad"); } });
 }
 // add a context source; on a macOS permission block, open the Full Disk Access flow with a retry.
 async function indexSource(payload, label) {
-  toast(`Indexing ${label} (first run loads the embedder)...`);
-  try { const r = await request("context.addSource", payload); const unit = (r.source.type && r.source.type !== "folder" && r.source.type !== "vault") ? "entries" : "files"; toast(`Added ${label}: ${r.source.docCount} ${unit}, ${r.source.chunkCount} chunks`); renderSources(); }
-  catch (e) { if (/FULL_DISK_ACCESS_REQUIRED/.test(e.message)) openFda(() => indexSource(payload, label)); else toast(`Could not add ${label}: ${e.message}`, "bad"); }
+  indexStatus(`Indexing ${label}...`, "busy");
+  try { const r = await request("context.addSource", payload); const unit = (r.source.type && r.source.type !== "folder" && r.source.type !== "vault") ? "entries" : "files"; indexStatus(`Added ${label}: ${r.source.docCount} ${unit}, ${r.source.chunkCount} chunks`, "done"); renderSources(); }
+  catch (e) { if (/FULL_DISK_ACCESS_REQUIRED/.test(e.message)) { $("index-status").classList.remove("show"); openFda(() => indexSource(payload, label)); } else { indexStatus(`Could not add ${label}: ${e.message}`, "err"); toast(`Could not add ${label}: ${e.message}`, "bad"); } }
 }
 async function addSourceFlow() {
   const dir = await pickPath({ title: "Add a folder as a source", mode: "folder" });
@@ -939,7 +957,7 @@ async function openVaultFlow() {
   const dir = await pickPath({ title: "Open an existing folder as your vault", mode: "folder", useLabel: "Use this folder as my vault" });
   if (!dir) return;
   await leaveMasterIfConnected();
-  try { await request("vault.switchVault", { path: dir }); resetVaultState(); await loadFiles(); await updateVaultChip(); toast("Vault: " + dir); }
+  try { await request("vault.switchVault", { path: dir }); resetVaultState(); await loadFiles(); await updateVaultChip(); toast("Vault: " + dir); ingest(); /* auto-index the opened folder for memory (status shows in the chip) */ }
   catch (e) { toast(e.message, "bad"); }
 }
 async function createVaultFlow() {
@@ -949,7 +967,7 @@ async function createVaultFlow() {
   const name = prompt("Name for the new vault folder (a new empty subfolder is created here; to use an existing folder instead, cancel and pick \"Open a folder as a vault\"):", "my-vault"); if (!name) return;
   const full = parent.replace(/\/+$/, "") + "/" + name;
   await leaveMasterIfConnected();
-  try { await request("vault.createVault", { path: full, name }); resetVaultState(); await loadFiles(); await updateVaultChip(); toast("New vault created at " + full); }
+  try { await request("vault.createVault", { path: full, name }); resetVaultState(); await loadFiles(); await updateVaultChip(); toast("New vault created at " + full); ingest(); /* initialize memory for the new vault */ }
   catch (e) { toast(e.message, "bad"); }
 }
 async function importCloudFlow() {

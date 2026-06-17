@@ -513,7 +513,7 @@ async function handle(type, msg, { reply, fail, push }) {
     // "Index vault for memory" = (re)index the current vault as source #1 of the context engine.
     // Build-then-swap so a failed/empty re-index never wipes existing memory (review P0-4).
     case "rag.ingest": {
-      const onProgress = (d, t) => push({ type: "rag.progress", phase: "embedding", done: d, total: t });
+      const onProgress = (d, t, phase) => push({ type: "rag.progress", phase: phase || "embedding", done: d, total: t });
       const existing = contextIndex.sources.find((s) => s.type === "vault");
       let src;
       if (existing && path.resolve(existing.path) === path.resolve(vault.root)) {
@@ -553,7 +553,7 @@ async function handle(type, msg, { reply, fail, push }) {
         if (st === "blocked") return fail(NEEDS_FDA); // even stat-ing it is TCC-denied -> open the grant-access flow
         if (st !== "dir") return fail(msg.preset ? `${p.label} store not found` : "pick an existing folder");
       }
-      const onProgress = (d, t) => push({ type: "context.progress", phase: "embedding", done: d, total: t });
+      const onProgress = (d, t, phase) => push({ type: "context.progress", phase: phase || "embedding", done: d, total: t });
       const src = await contextIndex.addFolderSource({ rootPath: p.path, label: p.label, type: p.type, exts: p.exts }, embedFor, onProgress);
       return reply({ source: src, ...contextIndex.stats() });
     }
@@ -566,7 +566,7 @@ async function handle(type, msg, { reply, fail, push }) {
     // a payload `id` would be spread over it and the reply would never match (silent hang).
     case "context.removeSource": { contextIndex.removeSource(msg.sourceId); return reply(contextIndex.stats()); }
     case "context.reindex": {
-      const onProgress = (d, t) => push({ type: "context.progress", phase: "embedding", done: d, total: t });
+      const onProgress = (d, t, phase) => push({ type: "context.progress", phase: phase || "embedding", done: d, total: t });
       await contextIndex.reindexSource(msg.sourceId, embedFor, onProgress);
       return reply(contextIndex.stats());
     }

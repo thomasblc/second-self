@@ -205,7 +205,12 @@ export class ContextIndex {
     const extSet = exts && exts.length ? new Set(exts.map((x) => (x.startsWith(".") ? x : "." + x).toLowerCase())) : null;
     let { files, blocked } = this._walk(rootAbs, extSet); // blocked may also flip true on a per-file EPERM below
     const records = [];
+    let scanned = 0;
     for (const f of files) {
+      // scan-phase progress: reading + parsing files (incl. PDF/Word) is silent otherwise, so a big
+      // folder looks frozen before embedding even starts. Throttled so we don't flood the socket.
+      scanned++;
+      if (onProgress && (scanned === 1 || scanned % 25 === 0 || scanned === files.length)) onProgress(scanned, files.length, "scanning");
       const ext = path.extname(f.abs).toLowerCase();
       let content;
       if (BINARY_EXTS.has(ext)) {
@@ -246,6 +251,7 @@ export class ContextIndex {
         throw e;
       }
       for (const suffix of ["-wal", "-shm"]) { try { fs.copyFileSync(rootAbs + suffix, tmpDb + suffix, fs.constants.COPYFILE_EXCL); tmpFiles.push(tmpDb + suffix); } catch { /* sidecar optional */ } }
+      if (onProgress) onProgress(0, 0, "scanning"); // indeterminate: reading rows out of the store copy
       rows = readStore(type, tmpDb); // [{ source, text }]
     } finally { cleanup(); }
     const records = [];
