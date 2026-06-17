@@ -98,10 +98,10 @@ export class ModelManager {
       if (!fn) return id;
       try { return await fn(id); }
       catch (e) {
-        // If the worker crashed (SIGSEGV/abort), this.llm still points at a dead modelId and the
-        // next same-slot request would skip reloading + fail forever. Drop the slot so the next
-        // call reloads a fresh worker.
-        if (/worker exited|in-flight calls were aborted|SIGSEGV|SIGABRT|SIGKILL/i.test(String(e?.message || e))) this.llm = null;
+        // If the worker crashed (SIGSEGV/abort) or a modelId went stale, this.llm/this.emb still
+        // point at dead ids and the next same-slot request would skip reloading + fail forever.
+        // A worker death takes BOTH slots down with it, so drop both -> the next call reloads fresh.
+        if (this._isWorkerGone(e)) { this.llm = null; this.emb = null; }
         throw e;
       }
     });
@@ -148,6 +148,12 @@ export class ModelManager {
 
   async ensureLLM(opts = {}) { return this._withLLM(opts, null); }
 
+  // A worker death (SIGSEGV/abort) or a stale modelId ("Model with ID ... not found") means the
+  // cached slot ids are dead; callers null this.llm/this.emb then reload on the next call.
+  _isWorkerGone(e) {
+    return /model with id .* not found|worker exited|in-flight calls were aborted|SIGSEGV|SIGABRT|SIGKILL/i.test(String(e?.message || e));
+  }
+
   async _ensureEmbedUnlocked() {
     if (this.emb) return this.emb.modelId;
     const modelId = await loadModel({ modelSrc: EMBEDDINGGEMMA_300M_Q4_0, modelType: "llamacpp-embedding" });
@@ -171,16 +177,25 @@ export class ModelManager {
   // Embed many texts; batches to keep each RPC small. Returns number[][] aligned to input.
   async embedMany(texts, { batch = 16, onProgress } = {}) {
     return this._serialize(async () => {
-      const modelId = await this._ensureEmbedUnlocked();
-      const out = [];
-      for (let i = 0; i < texts.length; i += batch) {
-        const slice = texts.slice(i, i + batch);
-        const res = await embed({ modelId, text: slice });
-        const vecs = Array.isArray(res.embedding[0]) ? res.embedding : [res.embedding];
-        for (const v of vecs) out.push(v);
-        if (onProgress) onProgress(Math.min(i + batch, texts.length), texts.length);
+      // Retry once: if the embedder id went stale (the worker restarted out from under us),
+      // embed() throws "Model with ID ... not found". Drop the cached slot and reload before failing.
+      for (let attempt = 0; attempt < 2; attempt++) {
+        try {
+          const modelId = await this._ensureEmbedUnlocked();
+          const out = [];
+          for (let i = 0; i < texts.length; i += batch) {
+            const slice = texts.slice(i, i + batch);
+            const res = await embed({ modelId, text: slice });
+            const vecs = Array.isArray(res.embedding[0]) ? res.embedding : [res.embedding];
+            for (const v of vecs) out.push(v);
+            if (onProgress) onProgress(Math.min(i + batch, texts.length), texts.length);
+          }
+          return out;
+        } catch (e) {
+          if (attempt === 0 && this._isWorkerGone(e)) { this.emb = null; continue; } // reload + retry
+          throw e;
+        }
       }
-      return out;
     });
   }
 
