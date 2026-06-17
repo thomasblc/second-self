@@ -13,9 +13,15 @@ const arg = (name, dflt) => { const i = process.argv.indexOf(name); return i > -
 
 const dataset = arg("--data", "bootstrap");
 const baseKey = arg("--base", "600m"); // must match the base the adapter was trained on
+// --src <path>: a LOCAL gguf overriding the registry BASE (e.g. the Q4_0 Qwen3-4B). It MUST be the
+// exact base the adapter was trained on (a LoRA only runs on its own base). NOTE: the "4b" registry
+// entry is MedGemma (medical) and is the WRONG base for a local-gguf adapter -> always pass --src for 4b.
+const srcArg = arg("--src", null);
 const BASES = { "600m": QWEN3_600M_INST_Q4, "1.7b": QWEN3_1_7B_INST_Q4, "3b": BITNET_B1_58_3B_INST_TQ2_0, "4b": MEDGEMMA_4B_IT_Q8_0 };
 const BASE = BASES[baseKey];
-if (!BASE) { console.error(`unknown --base ${baseKey} (600m | 1.7b | 3b | 4b)`); process.exit(1); }
+if (!srcArg && !BASE) { console.error(`unknown --base ${baseKey} (600m | 1.7b | 3b | 4b; or --src <local gguf>)`); process.exit(1); }
+if (srcArg && !fs.existsSync(srcArg)) { console.error(`--src gguf not found: ${srcArg}`); process.exit(1); }
+const modelSrc = srcArg ? srcArg : BASE;
 // the inference system prompt must MATCH the one used at training time:
 // whatsapp datasets train with the owner prompt (connectors/whatsapp.js), bootstrap with its own
 const owner = arg("--owner", null);
@@ -52,7 +58,7 @@ const PROMPTS = [
 ];
 
 async function askAll(label, modelConfig) {
-  const modelId = await loadModel({ modelSrc: BASE, modelType: "llm", modelConfig });
+  const modelId = await loadModel({ modelSrc, modelType: "llm", modelConfig });
   const out = [];
   for (const p of PROMPTS) {
     const run = completion({

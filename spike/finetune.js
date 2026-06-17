@@ -47,10 +47,17 @@ const microArg = arg("--micro", null);
 // 1e-4 (the SDK example value) made the loss climb then diverge to NaN on real chat data;
 // 5e-5 is the safer default for this dataset size
 const lr = Number(arg("--lr", "5e-5"));
-const baseKey = arg("--base", "600m"); // 600m | 1.7b (Qwen3 Q4_0) | 3b (BitNet b1.58 TQ2_0, non-medical, fine-tunable)
+const baseKey = arg("--base", "600m"); // 600m | 1.7b (Qwen3 Q4_0) | 3b (BitNet TQ2_0) | 4b (local gguf via --src)
+// --src <path>: load a LOCAL gguf instead of an SDK registry constant. Proven 2026-06-17: a genuine
+// Q4_0 Qwen3-4B-Instruct fine-tunes this way (the SDK's Qwen3-4B/8B constants are Q4_K_M, which the
+// quant gate rejects). --src takes precedence over the BASES lookup; baseKey then only labels the
+// output dir. e.g. --base 4b --src ~/.second-self/bases/qwen3-4b-instruct-q4_0.gguf
+const srcArg = arg("--src", null);
 const BASES = { "600m": QWEN3_600M_INST_Q4, "1.7b": QWEN3_1_7B_INST_Q4, "3b": BITNET_B1_58_3B_INST_TQ2_0 };
 const BASE = BASES[baseKey];
-if (!BASE) { console.error(`ABORT: unknown/non-fine-tunable --base ${baseKey} (600m | 1.7b; Qwen3 4B/8B are Q4_K_M and cannot be fine-tuned)`); process.exit(1); }
+if (!srcArg && !BASE) { console.error(`ABORT: unknown/non-fine-tunable --base ${baseKey} (600m | 1.7b | 3b; or pass a local Q4_0/Q8_0 gguf with --src <path>, e.g. --base 4b --src <path>)`); process.exit(1); }
+if (srcArg && !fs.existsSync(srcArg)) { console.error(`ABORT: --src gguf not found: ${srcArg}`); process.exit(1); }
+const modelSrc = srcArg ? srcArg : BASE;
 // SFT (chat, loss on assistant turns, JSONL) vs Causal (raw long-form text, .txt). Vault notes = causal.
 const mode = arg("--mode", "sft"); // sft | causal
 const ext = mode === "causal" ? "txt" : "jsonl";
@@ -93,9 +100,9 @@ let exitCode = 0;
 const t0 = Date.now();
 let lastLoss = null, lastValLoss = null, totalSteps = 0;
 try {
-  console.log(`loading base ${BASE.name || baseKey} (first run downloads it to ~/.qvac/models)...`);
+  console.log(`loading base ${srcArg ? srcArg : (BASE.name || baseKey)} (registry bases download to ~/.qvac/models on first run)...`);
   modelId = await loadModel({
-    modelSrc: BASE,
+    modelSrc,
     modelType: "llm",
     modelConfig: { device: "gpu", ctx_size: ctxLen },
   });
