@@ -141,6 +141,15 @@ button { font-family: inherit; }
 #graph-pane { display: none; }
 #graph-pane.active { display: flex; }
 #graph-left { flex: 1; position: relative; min-width: 0; }
+#graph-loading { position: absolute; inset: 0; z-index: 20; display: none; align-items: center; justify-content: center; background: rgba(8,11,16,.55); backdrop-filter: blur(2px); }
+#graph-loading.show { display: flex; animation: fade .15s ease; }
+.gl-card { display: flex; flex-direction: column; align-items: center; gap: 14px; padding: 26px 36px; background: var(--bg2); border: 1px solid var(--line); border-radius: 14px; box-shadow: var(--shadow); text-align: center; max-width: 320px; }
+.gl-orb { width: 44px; height: 44px; border-radius: 50%; border: 3px solid var(--line); border-top-color: var(--accent); animation: spin .8s linear infinite; position: relative; }
+.gl-orb::after { content: ""; position: absolute; inset: 7px; border-radius: 50%; background: var(--accent); animation: glpulse 1.4s ease-in-out infinite; }
+@keyframes glpulse { 0%, 100% { transform: scale(.55); opacity: .15; } 50% { transform: scale(1); opacity: .45; } }
+.gl-title { font-weight: 600; font-size: 14px; color: var(--fg); }
+.gl-sub { font-size: 12px; color: var(--mut); font-variant-numeric: tabular-nums; min-height: 15px; }
+@media (prefers-reduced-motion: reduce) { .gl-orb, .gl-orb::after { animation: none; } }
 #graph-side { width: 340px; max-width: 80vw; flex-shrink: 0; border-left: 1px solid var(--line); background: var(--bg2); display: none; flex-direction: column; }
 #graph-side.show { display: flex; animation: fade .15s ease; }
 .gs-head { display: flex; align-items: center; gap: 8px; padding: 11px 12px 11px 16px; border-bottom: 1px solid var(--line); }
@@ -157,7 +166,7 @@ button { font-family: inherit; }
 .sel-pill { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 45%, var(--line)); cursor: default; }
 .pill { background: color-mix(in srgb, var(--bg2) 85%, transparent); border: 1px solid var(--line); border-radius: 20px; padding: 4px 10px; font-size: 11px; color: var(--mut); }
 .legend { position: absolute; bottom: 10px; left: 10px; display: flex; gap: 12px; font-size: 11px; color: var(--mut); background: color-mix(in srgb, var(--bg2) 85%, transparent); padding: 6px 10px; border-radius: 8px; }
-.legend span::before { content: "—"; margin-right: 4px; }
+.legend span::before { content: ""; display: inline-block; width: 12px; height: 0; border-top: 2px solid currentColor; vertical-align: middle; margin-right: 5px; }
 .lg-link::before { color: var(--accent2); } .lg-tag::before { color: var(--mut); } .lg-embed::before { color: var(--accent); } .lg-hi::before { color: var(--hi); }
 
 /* Training drawer: slides in from the right inside the Chat tab. */

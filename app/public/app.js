@@ -330,12 +330,37 @@ function showGraphStats() {
   const s = graphData.stats;
   $("graph-stats").textContent = `${s.notes} notes · ${s.links} links · ${s.embedEdges || 0} semantic · ${s.orphans} orphan`;
 }
-$("btn-graph-build").onclick = async () => { $("graph-stats").textContent = "building..."; graphData = await request("graph.build"); graph.setData(graphData); showGraphStats(); if (current) renderBacklinks(current); };
-on("embed.progress", (m) => { $("graph-stats").textContent = `embedding ${m.done}/${m.total}...`; });
+// on-device work overlay (semantic links / rebuild). minMs keeps the animation visible long
+// enough to read even when the work is sub-second (embedding 96 notes can take <100ms warm).
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+function showGraphLoading(title, sub) { $("gl-title").textContent = title; $("gl-sub").textContent = sub || ""; $("graph-loading").classList.add("show"); }
+function hideGraphLoading() { $("graph-loading").classList.remove("show"); }
+
+$("btn-graph-build").onclick = async () => {
+  showGraphLoading("Rebuilding the knowledge graph", "Scanning notes, links and tags...");
+  const t0 = Date.now();
+  try {
+    graphData = await request("graph.build");
+    const dt = Date.now() - t0; if (dt < 400) await sleep(400 - dt);
+    graph.setData(graphData); showGraphStats(); if (current) renderBacklinks(current);
+  } catch (e) { toast(e.message, "bad"); }
+  finally { hideGraphLoading(); }
+};
+on("embed.progress", (m) => {
+  $("graph-stats").textContent = `embedding ${m.done}/${m.total}...`;
+  if ($("graph-loading").classList.contains("show")) $("gl-sub").textContent = m.total ? `Embedding notes ${m.done} / ${m.total}` : "Loading the on-device embedder...";
+});
 $("btn-graph-embed").onclick = async () => {
-  $("graph-stats").textContent = "embedding (first time downloads the embedder)...";
-  try { graphData = await request("graph.embed"); graph.setData(graphData); showGraphStats(); toast("Semantic links added"); }
-  catch (e) { $("graph-stats").textContent = "embed failed"; toast(e.message, "bad"); }
+  showGraphLoading("Analysing your content to create semantic links", "Embedding every note on-device...");
+  const t0 = Date.now();
+  try {
+    graphData = await request("graph.embed");
+    const dt = Date.now() - t0; if (dt < 900) await sleep(900 - dt); // let the animation register on fast runs
+    graph.setData(graphData); showGraphStats();
+    const n = graphData.stats?.embedEdges || 0;
+    toast(n ? `Added ${n} semantic links` : "No strong semantic links found");
+  } catch (e) { $("graph-stats").textContent = "embed failed"; toast(e.message, "bad"); }
+  finally { hideGraphLoading(); }
 };
 
 // NL highlight

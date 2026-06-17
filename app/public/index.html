@@ -82,6 +82,14 @@
           <span class="lg-link">link</span><span class="lg-tag">tag</span><span class="lg-embed">semantic</span><span class="lg-hi">match</span>
           <span style="border-left:1px solid var(--line);padding-left:10px">&#9711; selected = trains your voice (shift-click)</span>
         </div>
+        <!-- on-device work feedback (semantic links / rebuild) -->
+        <div id="graph-loading" aria-hidden="true">
+          <div class="gl-card" role="status" aria-live="polite">
+            <div class="gl-orb"></div>
+            <div class="gl-title" id="gl-title">Analysing your content</div>
+            <div class="gl-sub" id="gl-sub"></div>
+          </div>
+        </div>
       </div>
       <!-- Click a node to preview its note here, without leaving the graph -->
       <aside id="graph-side" aria-label="Note preview">
