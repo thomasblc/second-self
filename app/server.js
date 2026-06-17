@@ -342,6 +342,21 @@ wss.on("connection", (ws) => {
 
 // Ops that load an SDK model. While a training child holds the global ~/.qvac lock,
 // these would contend with it, so refuse them until the run finishes.
+// Back up a note's prior content before the agent overwrites it, so an agent edit is NEVER
+// destructive (P0 safety: write_note was create-or-overwrite with no confirmation/undo). Backups
+// live under ~/.second-self/agent-backups/ (outside the vault: not shown in the editor/graph, not
+// re-indexed) as <ISO-timestamp>__<flattened-rel-path>. Best-effort; returns the backup path or null.
+const AGENT_BACKUP_DIR = path.join(CONFIG_DIR, "agent-backups");
+function backupNote(rel, content) {
+  try {
+    fs.mkdirSync(AGENT_BACKUP_DIR, { recursive: true });
+    const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+    const dest = path.join(AGENT_BACKUP_DIR, `${stamp}__${rel.replace(/[/\\]/g, "__")}`);
+    fs.writeFileSync(dest, content, "utf8");
+    return dest;
+  } catch { return null; }
+}
+
 const MODEL_OPS = new Set(["graph.embed", "graph.highlight", "select.auto", "select.refine", "model.warm", "model.download", "rag.ingest", "chat.send", "agent.chat", "provider.start", "remote.connect", "context.addSource", "context.reindex", "context.search"]);
 
 async function handle(type, msg, { reply, fail, push }) {
@@ -620,7 +635,17 @@ async function handle(type, msg, { reply, fail, push }) {
         if (call.name === "list_notes") { actions.push({ tool: "list" }); return vault.list().map((f) => f.path).slice(0, 200).join("\n"); }
         if (call.name === "write_note") {
           if (permission !== "edit") return "permission denied: the vault is read-only for the agent";
-          try { vault.write(a.path, a.content || ""); invalidateCaches(); actions.push({ tool: "edit", arg: a.path }); push({ type: "agent.edited", path: a.path }); return "saved " + a.path; }
+          try {
+            // never silently clobber: back up the prior version (if any) before overwriting, and tell
+            // the user whether this CREATED or OVERWROTE a note so an agent edit is always recoverable.
+            let prior = null; try { prior = vault.read(a.path); } catch { prior = null; }
+            const backup = prior != null ? backupNote(a.path, prior) : null;
+            vault.write(a.path, a.content || "");
+            invalidateCaches();
+            actions.push({ tool: prior != null ? "edit" : "create", arg: a.path });
+            push({ type: "agent.edited", path: a.path, created: prior == null, backup });
+            return `${prior != null ? "overwrote" : "created"} ${a.path}${backup ? " (previous version backed up)" : ""}`;
+          }
           catch (e) { return "could not write " + a.path + ": " + e.message; }
         }
         return "unknown tool";

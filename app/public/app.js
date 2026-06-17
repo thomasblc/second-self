@@ -540,7 +540,7 @@ on("agent.tool", (m) => {
   const line = document.createElement("div"); line.className = "agent-act"; line.textContent = `${ico} ${m.name.replace("_", " ")} ${arg}`.trim();
   act.appendChild(line); messages.scrollTop = messages.scrollHeight;
 });
-on("agent.edited", (m) => { toast("Agent edited " + m.path, "warn"); loadFiles().catch(() => {}); });
+on("agent.edited", (m) => { toast(m.created ? "Agent created " + m.path : "Agent overwrote " + m.path + (m.backup ? " (previous version backed up)" : ""), "warn"); loadFiles().catch(() => {}); });
 // ---- global indexing status chip: visible from any tab so indexing never looks "stuck" ----
 let indexHideTimer = null;
 function indexStatus(text, state) { // state: "busy" | "done" | "err"
