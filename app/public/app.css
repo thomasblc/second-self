@@ -257,6 +257,7 @@ select, .num { background: var(--bg); border: 1px solid var(--line); color: var(
 #confirm { align-items: center; justify-content: center; }
 #prompt { align-items: center; justify-content: center; }
 #prompt-input:focus { outline: none; border-color: var(--accent); }
+.file-item mark, .snippet mark { background: color-mix(in srgb, var(--accent) 38%, transparent); color: var(--fg); border-radius: 3px; padding: 0 1px; }
 .btn.danger { background: color-mix(in srgb, #e5484d 22%, var(--bg2)); border-color: #e5484d; color: #ffd7d8; }
 .btn.danger:hover { background: color-mix(in srgb, #e5484d 34%, var(--bg2)); }
 .modal-head { display: flex; align-items: center; padding: 14px 18px; border-bottom: 1px solid var(--line); }

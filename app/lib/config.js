@@ -55,7 +55,10 @@ export function saveConfig(patch) {
 // Record a vault as known + make it current. Dedupes by resolved path, most-recent first.
 export function rememberVault(absPath, name) {
   const p = path.resolve(absPath);
-  const label = name || path.basename(p) || p;
+  // preserve a custom display name across switches: callers like setRoot pass no name and must not
+  // wipe a name the user chose. Only fall back to the folder name when none is set yet.
+  const existing = cache.vaults.find((v) => path.resolve(v.path) === p);
+  const label = name || (existing && existing.name) || path.basename(p) || p;
   const vaults = [{ path: p, name: label }, ...cache.vaults.filter((v) => path.resolve(v.path) !== p)]
     .filter((v) => { try { return fs.statSync(v.path).isDirectory(); } catch { return false; } })
     .slice(0, 12);

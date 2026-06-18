@@ -391,9 +391,23 @@ async function handle(type, msg, { reply, fail, push }) {
     return fail(`unknown base ${msg.baseKey}`);
   }
   switch (type) {
-    case "vault.info": return reply({ root: vault.root, name: path.basename(vault.root), isDemo: isDemoVault(), repoDocs: path.join(REPO_ROOT, "docs"), sample: SAMPLE });
+    case "vault.info": { const c = getConfig(); const v = c.vaults.find((x) => path.resolve(x.path) === path.resolve(vault.root)); return reply({ root: vault.root, name: (v && v.name) || path.basename(vault.root), isDemo: isDemoVault(), repoDocs: path.join(REPO_ROOT, "docs"), sample: SAMPLE }); }
+    case "vault.setName": { const name = String(msg.name || "").trim().slice(0, 60); if (!name) return fail("name required"); rememberVault(vault.root, name); return reply({ name }); }
     case "vault.vaults": { const c = getConfig(); return reply({ vaults: c.vaults, current: vault.root, isDemo: isDemoVault(), sample: SAMPLE }); }
     case "fs.browse": return reply(browseDir(msg.path, { files: !!msg.files, ext: msg.ext || null }));
+    // Native macOS file/folder picker (familiar UX). Async execFile so the dialog never blocks the
+    // server's event loop. Returns { path } (null if the user cancels). macOS only; the UI falls back
+    // to the in-app browser elsewhere.
+    case "fs.nativePick": {
+      if (process.platform !== "darwin") return fail("native picker is macOS only");
+      const kind = msg.kind === "file" ? "file" : "folder";
+      const prompt = String(msg.prompt || "Select").replace(/["\\\n]/g, " ").slice(0, 120); // safe inside the AppleScript string literal
+      const script = kind === "file" ? `POSIX path of (choose file with prompt "${prompt}")` : `POSIX path of (choose folder with prompt "${prompt}")`;
+      const picked = await new Promise((resolve) => {
+        execFile("osascript", ["-e", script], { timeout: 300000 }, (err, stdout) => resolve(err ? null : (String(stdout || "").trim() || null)));
+      });
+      return reply({ path: picked });
+    }
     case "fs.mkdir": {
       // constrain to a single new segment under an existing parent (no traversal / absolute escape)
       if (!msg.name || !SEGMENT_RE.test(msg.name) || msg.name === "." || msg.name === "..") return fail("invalid folder name");

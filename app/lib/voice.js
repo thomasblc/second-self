@@ -21,7 +21,7 @@ export const TTS_LANGS = ["en", "es", "fr", "de", "it", "pt", "nl", "pl", "tr", 
 
 const SR = 24000; // Chatterbox sample rate
 const VOICE_DIR = path.join(CONFIG_DIR, "voice");
-const DEFAULT_REF = path.join(VOICE_DIR, "default-ref.wav");
+const DEFAULT_REF = path.join(VOICE_DIR, "default-ref-v2.wav"); // v2: long enough for Chatterbox (>5s)
 
 const whisperCache = new Map(); // lang -> modelId
 let tts = { key: null, id: null }; // one resident TTS (reference+language are load-time)
@@ -64,7 +64,8 @@ async function ensureDefaultRef() {
   fs.mkdirSync(VOICE_DIR, { recursive: true });
   const aiff = path.join(VOICE_DIR, "_ref.aiff");
   await new Promise((resolve, reject) => {
-    const p = spawn("say", ["-o", aiff, "Hello, this is your second self speaking. Bonjour."]);
+    // Chatterbox needs > 5s of clean mono speech for the reference, so this line is deliberately long.
+    const p = spawn("say", ["-o", aiff, "Hello, this is your second self, and I run entirely on your own machine. Nothing you say or hear ever leaves this device, it all stays private and local. Bonjour, je suis votre second cerveau, je parle votre langue et je reste sur votre ordinateur."]);
     p.on("close", (c) => (c === 0 ? resolve() : reject(new Error("macOS `say` failed (needed once to seed a default voice)"))));
     p.on("error", (e) => reject(new Error("macOS `say` not available: " + e.message)));
   });

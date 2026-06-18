@@ -152,14 +152,23 @@ function renderNode(node, isRoot) {
   return frag;
 }
 function countFiles(dir) { let n = dir.files.length; for (const [, d] of dir.dirs) n += countFiles(d); return n; }
-function fileItem(f, search) {
+function fileItem(f, query) {
   const div = document.createElement("div");
-  div.className = "file-item" + (current === f.path ? " active" : "") + (search ? " search-hit" : "");
-  div.innerHTML = `<div>${escapeHtml(f.title)}</div>` + (search && f.snippet ? `<div class="snippet">${escapeHtml(f.snippet)}</div>` : "");
+  div.className = "file-item" + (current === f.path ? " active" : "") + (query ? " search-hit" : "");
+  div.innerHTML = `<div>${highlightTerm(f.title, query)}</div>` + (query && f.snippet ? `<div class="snippet">${highlightTerm(f.snippet, query)}</div>` : "");
   div.onclick = () => openNote(f.path);
   return div;
 }
 function escapeHtml(s) { return String(s).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c])); }
+// Escape HTML first, then wrap matches of the query in <mark> (the only HTML injected, so XSS-safe;
+// the query is regex-escaped). Used to highlight the search term in note results + snippets.
+function highlightTerm(text, query) {
+  const esc = escapeHtml(text);
+  const q = (query || "").trim();
+  if (!q) return esc;
+  const safe = q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  try { return esc.replace(new RegExp(`(${safe})`, "gi"), "<mark>$1</mark>"); } catch { return esc; }
+}
 
 // ============================================================ editor
 const editor = $("editor"), preview = $("preview"), noteTitle = $("note-title"), saveState = $("save-state");
@@ -311,7 +320,7 @@ $("search").addEventListener("input", (e) => {
     const d = await request("vault.search", { query: q });
     const el = $("file-list"); el.innerHTML = "";
     if (!d.results.length) { el.innerHTML = `<div class="empty" style="padding:20px">no matches</div>`; return; }
-    d.results.forEach((f) => el.appendChild(fileItem(f, true)));
+    d.results.forEach((f) => el.appendChild(fileItem(f, q)));
   }, 200);
 });
 
@@ -670,7 +679,7 @@ async function indexSource(payload, label) {
   catch (e) { if (/FULL_DISK_ACCESS_REQUIRED/.test(e.message)) { $("index-status").classList.remove("show"); openFda(() => indexSource(payload, label)); } else { indexStatus(`Could not add ${label}: ${e.message}`, "err"); toast(`Could not add ${label}: ${e.message}`, "bad"); } }
 }
 async function addSourceFlow() {
-  const dir = await pickPath({ title: "Add a folder as a source", mode: "folder" });
+  const dir = await nativePick({ title: "Add a folder as a source", mode: "folder" });
   if (!dir) return;
   indexSource({ path: dir }, "folder");
 }
@@ -958,6 +967,13 @@ $("vault-chip").onclick = async (e) => {
 document.addEventListener("click", (e) => { if (!vaultPop.contains(e.target) && !$("vault-chip").contains(e.target)) vaultPop.classList.remove("show"); });
 $("pop-open").onclick = () => { vaultPop.classList.remove("show"); openVaultFlow(); };
 $("pop-create").onclick = () => { vaultPop.classList.remove("show"); createVaultFlow(); };
+$("pop-rename").onclick = async () => {
+  vaultPop.classList.remove("show");
+  const name = await promptModal("Display name for this vault. The folder on disk is unchanged.", { title: "Rename vault", okLabel: "Save", value: (vaultInfo && vaultInfo.name) || "" });
+  if (!name) return;
+  try { await request("vault.setName", { name }); await updateVaultChip(); toast("Renamed to " + name); }
+  catch (e) { toast(e.message, "bad"); }
+};
 
 async function renderVaultList(el) {
   let d; try { d = await request("vault.vaults"); } catch { return; }
@@ -1030,9 +1046,17 @@ $("picker-newfolder").onclick = async () => {
 };
 picker.addEventListener("click", (e) => { if (e.target === picker) finishPick(null); });
 
+// Prefer the native macOS file/folder dialog (familiar navigation); fall back to the in-app
+// browser off-macOS or if osascript is unavailable. Same call shape as pickPath.
+async function nativePick(opts) {
+  try {
+    const d = await request("fs.nativePick", { prompt: opts.title, kind: opts.mode === "file" ? "file" : "folder" });
+    return d.path || null;
+  } catch { return pickPath(opts); }
+}
 async function openVaultFlow() {
   if (!await confirmDiscard()) return;
-  const dir = await pickPath({ title: "Open an existing folder as your vault", mode: "folder", useLabel: "Use this folder as my vault" });
+  const dir = await nativePick({ title: "Open an existing folder as your vault", mode: "folder", useLabel: "Use this folder as my vault" });
   if (!dir) return;
   await leaveMasterIfConnected();
   try { await request("vault.switchVault", { path: dir }); resetVaultState(); await loadFiles(); await updateVaultChip(); toast("Vault: " + dir); ingest(); /* auto-index the opened folder for memory (status shows in the chip) */ }
@@ -1040,7 +1064,7 @@ async function openVaultFlow() {
 }
 async function createVaultFlow() {
   if (!await confirmDiscard()) return;
-  const parent = await pickPath({ title: "Choose where to create a NEW (empty) vault folder", mode: "folder", useLabel: "Create new vault in this folder" });
+  const parent = await nativePick({ title: "Choose where to create a NEW (empty) vault folder", mode: "folder", useLabel: "Create new vault in this folder" });
   if (!parent) return;
   const name = await promptModal("A new empty subfolder is created here. To use an existing folder of notes instead, cancel and pick \"Open a folder as a vault\".", { title: "Name the new vault", okLabel: "Create", value: "my-vault" }); if (!name) return;
   const full = parent.replace(/\/+$/, "") + "/" + name;
@@ -1049,7 +1073,7 @@ async function createVaultFlow() {
   catch (e) { toast(e.message, "bad"); }
 }
 async function importCloudFlow() {
-  const p = await pickPath({ title: "Select your ChatGPT or Claude export (a .json file)", mode: "file", ext: ".json" });
+  const p = await nativePick({ title: "Select your ChatGPT or Claude export (a .json file)", mode: "file", ext: ".json" });
   if (!p) return;
   await leaveMasterIfConnected();
   toast("Importing conversations...");
