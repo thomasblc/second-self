@@ -21,6 +21,7 @@ import { hardwareInfo, fit, recommend } from "./lib/hardware.js";
 import { importCloudExport } from "./lib/cloud-chat.js";
 import { MasterServer, MasterClient } from "./lib/master-link.js";
 import { getConfig, saveConfig, rememberVault, forgetVault, CONFIG_DIR } from "./lib/config.js";
+import { transcribeFile, speak, STT_LANGS, TTS_LANGS } from "./lib/voice.js";
 import os from "node:os";
 import crypto from "node:crypto";
 import { execFile } from "node:child_process";
@@ -257,11 +258,36 @@ function scheduleAutoSync(overrideMs) {
 // ---- static HTTP ----
 const MIME = { ".html": "text/html", ".js": "text/javascript", ".css": "text/css", ".json": "application/json", ".svg": "image/svg+xml" };
 const LOCAL_HOSTS = ["localhost", "127.0.0.1", "[::1]", "::1", ""];
-const server = http.createServer((req, res) => {
+const server = http.createServer(async (req, res) => {
   try {
     // Host allow-list: blocks DNS-rebinding even if an attacker page presents an allowed Origin.
     const host = (req.headers.host || "").split(":")[0];
     if (!LOCAL_HOSTS.includes(host)) { res.writeHead(403); res.end("forbidden"); return; }
+
+    // ---- voice I/O API (token-gated, 127.0.0.1 only, on-device). Audio bytes in/out. ----
+    const u = new URL(req.url || "/", "http://x");
+    if (u.pathname.startsWith("/api/voice/")) {
+      if (u.searchParams.get("t") !== WS_TOKEN) { res.writeHead(403); res.end("forbidden"); return; }
+      const readRaw = async () => { const c = []; for await (const ch of req) c.push(ch); return Buffer.concat(c); };
+      if (req.method === "POST" && u.pathname === "/api/voice/transcribe") {
+        const lang = (u.searchParams.get("lang") || "en").toLowerCase();
+        const tmp = path.join(os.tmpdir(), `ss-stt-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
+        try { fs.writeFileSync(tmp, await readRaw()); const text = await transcribeFile(tmp, lang); res.writeHead(200, { "Content-Type": "application/json" }); res.end(JSON.stringify({ text })); }
+        catch (e) { res.writeHead(500); res.end(JSON.stringify({ error: String(e.message || e) })); }
+        finally { try { fs.unlinkSync(tmp); } catch { /* */ } }
+        return;
+      }
+      if (req.method === "POST" && u.pathname === "/api/voice/speak") {
+        let body = {}; try { body = JSON.parse((await readRaw()).toString() || "{}"); } catch { /* */ }
+        const text = String(body.text || "").trim(); const lang = String(body.lang || "en").toLowerCase();
+        if (!text) { res.writeHead(400); res.end(JSON.stringify({ error: "text required" })); return; }
+        try { const wav = await speak(text, lang); res.writeHead(200, { "Content-Type": "audio/wav", "Content-Length": wav.length }); res.end(wav); }
+        catch (e) { res.writeHead(500); res.end(JSON.stringify({ error: String(e.message || e) })); }
+        return;
+      }
+      res.writeHead(404); res.end("not found"); return;
+    }
+
     let p = decodeURIComponent((req.url || "/").split("?")[0]); // can throw URIError on bad %-escapes
     if (p === "/") p = "/index.html";
     const file = path.join(PUBLIC, path.normalize(p).replace(/^(\.\.[/\\])+/, ""));
@@ -337,7 +363,7 @@ wss.on("connection", (ws) => {
   });
   ws.on("close", () => { if (masterClient) masterClient.detach(cid); });
   // greet with current state
-  send({ type: "hello", data: { vaultRoot: vault.root, model: mm.status(), running: trainer.isRunning(), adapters: trainer.listAdapters() } });
+  send({ type: "hello", data: { vaultRoot: vault.root, model: mm.status(), running: trainer.isRunning(), adapters: trainer.listAdapters(), voice: { stt: STT_LANGS, tts: TTS_LANGS } } });
 });
 
 // Ops that load an SDK model. While a training child holds the global ~/.qvac lock,

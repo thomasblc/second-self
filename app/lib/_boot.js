@@ -9,3 +9,9 @@ process.emitWarning = (warning, ...rest) => {
   if (type === "ExperimentalWarning" && /SQLite/i.test(String(warning))) return;
   return _emit(warning, ...rest);
 };
+
+// Unlock the full TTS language set (incl. French) BEFORE any module imports @qvac/sdk. The SDK's
+// language enum is capped to 4 by a schema bug; this rewrites it on disk (the worker reads it too).
+// Idempotent + self-heals after npm install. Must run here so models.js/voice.js see the patched SDK.
+import { patchSdkTtsLanguages } from "./patch-sdk.mjs";
+try { patchSdkTtsLanguages(); } catch { /* non-fatal: TTS just stays capped to en/es/de/it */ }
