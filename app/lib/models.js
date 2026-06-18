@@ -233,7 +233,11 @@ export class ModelManager {
 // line is one "word"). A normal 120-word chunk of English or code stays well under MAX_CHUNK_CHARS,
 // so it is returned byte-for-byte as before.
 const MAX_WORD_CHARS = 800;   // a single token longer than this is split before chunking
-const MAX_CHUNK_CHARS = 2400; // ~120 words x 20 chars; above this we hard-split (covers CJK / blobs)
+// The embedder rejects any input line over 1024 TOKENS ("batch overflow: ... exceeds batch size
+// (1024)"), and the limit cannot be raised via load config (the embedding schema rejects n_batch).
+// Tokens-per-char varies (dense French markdown measured ~2.1 chars/token; CJK ~1), so cap chunks at
+// 950 CHARS: that stays under 1024 tokens for any realistic content, incl. accents/markdown/CJK.
+const MAX_CHUNK_CHARS = 950;
 function splitLongWords(words) {
   const out = [];
   for (const w of words) {
