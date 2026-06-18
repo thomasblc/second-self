@@ -192,6 +192,25 @@ $("confirm-ok").onclick = () => closeConfirm(true);
 $("confirm-cancel").onclick = () => closeConfirm(false);
 $("confirm").addEventListener("click", (e) => { if (e.target === $("confirm")) closeConfirm(false); });
 
+// Custom text-input modal (replaces the browser prompt()). Resolves to the trimmed value or null.
+let _promptResolve = null;
+function promptModal(message, { title = "Enter a value", okLabel = "OK", value = "", placeholder = "" } = {}) {
+  return new Promise((resolve) => {
+    _promptResolve = resolve;
+    $("prompt-title").textContent = title;
+    $("prompt-msg").textContent = message || "";
+    const inp = $("prompt-input"); inp.value = value; inp.placeholder = placeholder;
+    $("prompt-ok").textContent = okLabel;
+    $("prompt").classList.add("show");
+    inp.focus(); inp.select();
+  });
+}
+function closePrompt(val) { $("prompt").classList.remove("show"); const r = _promptResolve; _promptResolve = null; if (r) r(val); }
+$("prompt-ok").onclick = () => closePrompt($("prompt-input").value.trim() || null);
+$("prompt-cancel").onclick = () => closePrompt(null);
+$("prompt").addEventListener("click", (e) => { if (e.target === $("prompt")) closePrompt(null); });
+$("prompt-input").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); closePrompt($("prompt-input").value.trim() || null); } else if (e.key === "Escape") closePrompt(null); });
+
 async function confirmDiscard() {
   if (!dirty) return true;
   if (await confirmModal("You have unsaved changes in this note. Discard them?", { title: "Discard changes?", okLabel: "Discard", danger: true })) { dirty = false; return true; } // clear dirty so a pending autosave can't fire post-switch
@@ -242,7 +261,7 @@ async function saveNote(auto) {
 $("btn-new").onclick = newNote;
 async function newNote() {
   if (!await confirmDiscard()) return;
-  const name = prompt("New note path (e.g. ideas/my-note.md):"); if (!name) return;
+  const name = await promptModal("Path inside your vault. Add a folder with a slash, e.g. ideas/my-note.md", { title: "New note", okLabel: "Create", placeholder: "my-note.md" }); if (!name) return;
   const path = name.endsWith(".md") ? name : name + ".md";
   try { await request("vault.create", { path }); dirty = false; await loadFiles(); openNote(path); toast("Created " + path); }
   catch (e) { toast(e.message, "bad"); }
@@ -370,10 +389,15 @@ async function runHighlight(q) {
   $("graph-stats").textContent = "thinking...";
   try {
     const d = await request("graph.highlight", { query: q });
-    graph.setHighlight(d.matches.map((m) => m.path));
-    $("btn-hl-clear").style.display = d.matches.length ? "" : "none";
+    // union the semantic matches with literal name/path matches, so a literal hit (e.g. "test"
+    // appearing in a note title) is never dropped just because its cosine score was below threshold.
+    const ql = q.toLowerCase();
+    const literal = graphData.nodes.filter((n) => (n.label || "").toLowerCase().includes(ql) || (n.path || "").toLowerCase().includes(ql)).map((n) => n.id);
+    const keys = [...new Set([...d.matches.map((m) => m.path), ...literal])];
+    graph.setHighlight(keys);
+    $("btn-hl-clear").style.display = keys.length ? "" : "none";
     showGraphStats();
-    toast(d.matches.length ? `Highlighted ${d.matches.length} notes for "${q}"` : `No matches for "${q}"`, d.matches.length ? "" : "warn");
+    toast(keys.length ? `Highlighted ${keys.length} notes for "${q}"` : `No matches for "${q}"`, keys.length ? "" : "warn");
   } catch (e) { $("graph-stats").textContent = "highlight failed"; toast(e.message, "bad"); }
 }
 // type = instant client-side name/path match; Enter = semantic (model) highlight
@@ -565,8 +589,8 @@ on("context.progress", indexProgress);
 
 async function ingest() {
   indexStatus("Indexing your documents for memory...", "busy");
-  try { const d = await request("rag.ingest"); indexStatus(`Indexed ${d.ingested} docs (${d.chunks} chunks) for memory`, "done"); }
-  catch (e) { indexStatus("Indexing failed: " + e.message, "err"); toast(e.message, "bad"); }
+  try { const d = await request("rag.ingest"); indexStatus(`Indexed ${d.ingested} docs (${d.chunks} chunks) for memory`, "done"); toast(`Memory updated: ${d.ingested} docs indexed (${d.chunks} chunks)`); }
+  catch (e) { indexStatus("Indexing failed: " + e.message, "err"); toast("Indexing failed: " + e.message, "bad"); }
   finally { if ($("memory-pane").classList.contains("active")) renderSources(); }
 }
 
@@ -636,13 +660,13 @@ async function renderSources() {
   body.querySelectorAll("[data-indexvault]").forEach((b) => b.onclick = () => ingest());
   body.querySelectorAll("[data-connect]").forEach((b) => b.onclick = () => addPresetFlow(b.dataset.connect));
   body.querySelector("[data-addfolder]")?.addEventListener("click", () => addSourceFlow());
-  body.querySelectorAll("[data-reindex]").forEach((b) => b.onclick = async () => { indexStatus("Re-indexing...", "busy"); try { await request("context.reindex", { sourceId: b.dataset.reindex }); indexStatus("Re-indexed", "done"); renderSources(); } catch (e) { indexStatus("Re-index failed: " + e.message, "err"); toast(e.message, "bad"); } });
+  body.querySelectorAll("[data-reindex]").forEach((b) => b.onclick = async () => { indexStatus("Re-indexing...", "busy"); try { const s = await request("context.reindex", { sourceId: b.dataset.reindex }); indexStatus("Re-indexed", "done"); toast(`Re-indexed (${s.totalChunks ?? "?"} chunks total)`); renderSources(); } catch (e) { indexStatus("Re-index failed: " + e.message, "err"); toast("Re-index failed: " + e.message, "bad"); } });
   body.querySelectorAll("[data-rm]").forEach((b) => b.onclick = async () => { try { await request("context.removeSource", { sourceId: b.dataset.rm }); renderSources(); toast("Removed from memory"); } catch (e) { toast(e.message, "bad"); } });
 }
 // add a context source; on a macOS permission block, open the Full Disk Access flow with a retry.
 async function indexSource(payload, label) {
   indexStatus(`Indexing ${label}...`, "busy");
-  try { const r = await request("context.addSource", payload); const unit = (r.source.type && r.source.type !== "folder" && r.source.type !== "vault") ? "entries" : "files"; indexStatus(`Added ${label}: ${r.source.docCount} ${unit}, ${r.source.chunkCount} chunks`, "done"); renderSources(); }
+  try { const r = await request("context.addSource", payload); const unit = (r.source.type && r.source.type !== "folder" && r.source.type !== "vault") ? "entries" : "files"; indexStatus(`Added ${label}: ${r.source.docCount} ${unit}, ${r.source.chunkCount} chunks`, "done"); toast(`Added ${label}: ${r.source.docCount} ${unit}, ${r.source.chunkCount} chunks`); renderSources(); }
   catch (e) { if (/FULL_DISK_ACCESS_REQUIRED/.test(e.message)) { $("index-status").classList.remove("show"); openFda(() => indexSource(payload, label)); } else { indexStatus(`Could not add ${label}: ${e.message}`, "err"); toast(`Could not add ${label}: ${e.message}`, "bad"); } }
 }
 async function addSourceFlow() {
@@ -703,6 +727,7 @@ async function send() {
       const d = await request("agent.chat", { message: text, history, baseKey, permission });
       history.push({ role: "user", content: text }, { role: "assistant", content: d.contentText });
       if (history.length > 12) history = history.slice(-12);
+      maybeSpeak(d.contentText);
       $("chat-model-state").textContent = `agent · ${baseKey} · ${(d.actions || []).length} tool calls`;
     } catch (e) { curAssistantEl.querySelector(".body").innerHTML = `<span style="color:var(--bad)">${escapeHtml(e.message)}</span>`; $("chat-model-state").textContent = ""; }
     finally { chatBusy = false; $("btn-send").disabled = false; }
@@ -716,12 +741,63 @@ async function send() {
     history.push({ role: "user", content: text }, { role: "assistant", content: d.contentText });
     if (history.length > 12) history = history.slice(-12);
     if (d.hits && d.hits.length) renderCitations(curAssistantEl, d.hits);
+    maybeSpeak(d.contentText);
     $("chat-model-state").textContent = `${baseKey}${d.model?.voice ? " · voice" : ""}${d.model?.memory ? " · memory" : ""}${d.stats?.tokensPerSecond ? " · " + d.stats.tokensPerSecond.toFixed(0) + " tok/s" : ""}`;
   } catch (e) { curAssistantEl.querySelector(".body").innerHTML = `<span style="color:var(--bad)">${escapeHtml(e.message)}</span>`; $("chat-model-state").textContent = ""; }
   finally { chatBusy = false; $("btn-send").disabled = false; }
 }
 $("btn-send").onclick = send;
 chatText.addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } });
+
+// ============================================================ voice I/O (on-device STT + TTS)
+const VOICE_TOKEN = window.__SS_TOKEN || "";
+const LANG_NAMES = { en: "English", fr: "Francais", es: "Espanol", de: "Deutsch", it: "Italiano", pt: "Portugues", nl: "Nederlands", pl: "Polski", tr: "Turkce", sv: "Svenska", da: "Dansk", fi: "Suomi", no: "Norsk", el: "Greek", ms: "Melayu", ar: "Arabic", ko: "Korean" };
+function populateVoiceLangs(v) {
+  if (!v) return;
+  const opt = (l) => `<option value="${l}">${LANG_NAMES[l] || l}</option>`;
+  if (Array.isArray(v.stt) && v.stt.length) $("voice-stt-lang").innerHTML = v.stt.map(opt).join("");
+  if (Array.isArray(v.tts) && v.tts.length) { $("voice-tts-lang").innerHTML = v.tts.map(opt).join(""); $("voice-tts-lang").value = v.tts.includes("en") ? "en" : v.tts[0]; }
+}
+on("hello", (m) => populateVoiceLangs(m.data?.voice));
+
+let mediaRec = null, recChunks = [], recording = false;
+$("btn-mic").onclick = async () => {
+  if (recording) { try { mediaRec && mediaRec.stop(); } catch {} return; }
+  if (!navigator.mediaDevices?.getUserMedia) { toast("Microphone not available in this browser", "bad"); return; }
+  let stream;
+  try { stream = await navigator.mediaDevices.getUserMedia({ audio: true }); }
+  catch { toast("Microphone access denied", "bad"); return; }
+  recChunks = []; mediaRec = new MediaRecorder(stream);
+  mediaRec.ondataavailable = (e) => { if (e.data && e.data.size) recChunks.push(e.data); };
+  mediaRec.onstop = async () => {
+    stream.getTracks().forEach((t) => t.stop());
+    recording = false; $("btn-mic").classList.remove("rec"); $("btn-mic").classList.add("busy");
+    const lang = $("voice-stt-lang").value || "en";
+    try {
+      const blob = new Blob(recChunks, { type: mediaRec.mimeType || "audio/webm" });
+      const r = await fetch(`/api/voice/transcribe?t=${encodeURIComponent(VOICE_TOKEN)}&lang=${lang}`, { method: "POST", body: blob });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(d.error || "transcription failed");
+      if (d.text) { chatText.value = (chatText.value ? chatText.value + " " : "") + d.text; chatText.focus(); }
+      else toast("Didn't catch any speech", "warn");
+    } catch (e) { toast("Transcription failed: " + e.message, "bad"); }
+    finally { $("btn-mic").classList.remove("busy"); }
+  };
+  mediaRec.start(); recording = true; $("btn-mic").classList.add("rec");
+};
+$("tg-speak").onchange = () => { $("voice-tts-row").style.display = $("tg-speak").checked ? "" : "none"; };
+async function speakReply(text) {
+  const lang = $("voice-tts-lang").value || "en";
+  const clean = text.replace(/[#*`>_~\[\]]/g, "").replace(/\s+/g, " ").trim().slice(0, 1000);
+  if (!clean) return;
+  try {
+    const r = await fetch(`/api/voice/speak?t=${encodeURIComponent(VOICE_TOKEN)}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text: clean, lang }) });
+    if (!r.ok) return;
+    const url = URL.createObjectURL(new Blob([await r.arrayBuffer()], { type: "audio/wav" }));
+    const a = new Audio(url); a.onended = () => URL.revokeObjectURL(url); a.play().catch(() => {});
+  } catch { /* speaking is best-effort */ }
+}
+function maybeSpeak(text) { if ($("tg-speak") && $("tg-speak").checked && text) speakReply(text); }
 
 // ============================================================ models pane
 let modelsLoaded = false;
@@ -865,6 +941,8 @@ function resetVaultState() {
   graphData = null; current = null; selection = new Set(); dirty = false; history = [];
   editor.value = ""; preview.innerHTML = ""; noteTitle.textContent = "No note open";
   setEditMode(false); syncSelection();
+  // if the user is looking at the graph while switching vaults, rebuild it live (don't leave the old one)
+  if ($("graph-pane")?.classList.contains("active")) { graph.clearHighlight(); ensureGraph(); }
 }
 
 const vaultPop = $("vault-pop");
@@ -947,7 +1025,7 @@ $("picker-up").onclick = () => { if (pickerState.parent) browse(pickerState.pare
 $("picker-home").onclick = () => browse(pickerState.home);
 $("picker-use").onclick = () => finishPick(pickerState.path);
 $("picker-newfolder").onclick = async () => {
-  const name = prompt("New folder name:"); if (!name) return;
+  const name = await promptModal("Name of the new folder", { title: "New folder", okLabel: "Create" }); if (!name) return;
   try { const r = await request("fs.mkdir", { path: pickerState.path, name }); browse(r.path); } catch (e) { toast(e.message, "bad"); }
 };
 picker.addEventListener("click", (e) => { if (e.target === picker) finishPick(null); });
@@ -964,7 +1042,7 @@ async function createVaultFlow() {
   if (!await confirmDiscard()) return;
   const parent = await pickPath({ title: "Choose where to create a NEW (empty) vault folder", mode: "folder", useLabel: "Create new vault in this folder" });
   if (!parent) return;
-  const name = prompt("Name for the new vault folder (a new empty subfolder is created here; to use an existing folder instead, cancel and pick \"Open a folder as a vault\"):", "my-vault"); if (!name) return;
+  const name = await promptModal("A new empty subfolder is created here. To use an existing folder of notes instead, cancel and pick \"Open a folder as a vault\".", { title: "Name the new vault", okLabel: "Create", value: "my-vault" }); if (!name) return;
   const full = parent.replace(/\/+$/, "") + "/" + name;
   await leaveMasterIfConnected();
   try { await request("vault.createVault", { path: full, name }); resetVaultState(); await loadFiles(); await updateVaultChip(); toast("New vault created at " + full); ingest(); /* initialize memory for the new vault */ }

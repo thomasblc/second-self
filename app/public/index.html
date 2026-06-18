@@ -108,6 +108,7 @@
         <div id="messages"><div class="empty"><div style="font-size:34px">&#128172;</div>Talk to the base model now. Turn on <b>Your voice</b>, <b>Your memory</b>, and <b>Agent</b> in the panel on the right to make it answer like you and know what you know. Everything runs on this machine.</div></div>
         <div class="chat-input">
           <textarea id="chat-text" placeholder="Ask anything... (Enter to send)"></textarea>
+          <button class="btn" id="btn-mic" title="Dictate: click, speak in your language, click again. On-device." aria-label="Dictate by voice">&#127908;</button>
           <button class="btn primary" id="btn-send">Send</button>
         </div>
       </div>
@@ -138,6 +139,12 @@
           <label class="cs-switch" for="tg-agent"><input type="checkbox" id="tg-agent"><span>Agent</span></label>
           <div class="cs-desc" title="The assistant actively uses tools to search and read (and optionally edit) your vault while answering.">Let it actively search &amp; read your vault while answering.</div>
           <select id="agent-perm" class="cs-select" style="display:none"><option value="read">read-only</option><option value="edit">read + edit</option></select>
+        </div>
+        <div class="cs-cap cs-voice">
+          <div class="cs-label">Voice <span class="cs-on-device" title="Speech recognition and speech run entirely on this machine.">on-device</span></div>
+          <div class="cs-voice-row"><span>Speak to it in</span><select id="voice-stt-lang" class="cs-select"></select></div>
+          <label class="cs-switch" for="tg-speak"><input type="checkbox" id="tg-speak"><span>Speak replies aloud</span></label>
+          <div class="cs-voice-row" id="voice-tts-row" style="display:none"><span>Reply voice</span><select id="voice-tts-lang" class="cs-select"></select></div>
         </div>
         <div class="cs-actions">
           <button class="btn" id="btn-manage-memory" title="Manage what your AI can recall: your documents + connected Mac sources">&#129504; Manage memory</button>
@@ -349,6 +356,19 @@
     <div class="set-row" style="border:0; padding:0; gap:10px; justify-content:flex-end">
       <button class="btn" id="confirm-cancel">Cancel</button>
       <button class="btn primary" id="confirm-ok">OK</button>
+    </div>
+  </div>
+</div></div>
+
+<!-- Custom text-prompt modal (replaces the browser's prompt()) -->
+<div class="overlay" id="prompt"><div class="modal" style="width:min(440px,94vw)">
+  <div class="modal-head"><h2 id="prompt-title">Enter a value</h2></div>
+  <div style="padding:18px 20px; line-height:1.6">
+    <p id="prompt-msg" style="margin:0 0 10px; color:var(--mut); font-size:13px"></p>
+    <input id="prompt-input" type="text" autocomplete="off" spellcheck="false" style="width:100%; background:var(--bg2); border:1px solid var(--line); border-radius:8px; color:var(--fg); padding:9px 11px; font:inherit; margin-bottom:18px">
+    <div class="set-row" style="border:0; padding:0; gap:10px; justify-content:flex-end">
+      <button class="btn" id="prompt-cancel">Cancel</button>
+      <button class="btn primary" id="prompt-ok">OK</button>
     </div>
   </div>
 </div></div>

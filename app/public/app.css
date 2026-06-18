@@ -255,6 +255,8 @@ select, .num { background: var(--bg); border: 1px solid var(--line); color: var(
 #picker { align-items: center; justify-content: center; }
 #fda { align-items: center; justify-content: center; }
 #confirm { align-items: center; justify-content: center; }
+#prompt { align-items: center; justify-content: center; }
+#prompt-input:focus { outline: none; border-color: var(--accent); }
 .btn.danger { background: color-mix(in srgb, #e5484d 22%, var(--bg2)); border-color: #e5484d; color: #ffd7d8; }
 .btn.danger:hover { background: color-mix(in srgb, #e5484d 34%, var(--bg2)); }
 .modal-head { display: flex; align-items: center; padding: 14px 18px; border-bottom: 1px solid var(--line); }
@@ -334,6 +336,14 @@ select, .num { background: var(--bg); border: 1px solid var(--line); color: var(
 #index-status.err .is-spin { border: 2px solid transparent; animation: none; }
 #index-status.err .is-spin::before { content: "\26A0"; color: #ff6b6b; font-size: 13px; }
 .is-text { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#btn-mic { font-size: 16px; line-height: 1; padding: 0 12px; }
+#btn-mic.rec { background: #ff6b6b; border-color: #ff6b6b; color: #2a0b0b; animation: micpulse 1s ease-in-out infinite; }
+#btn-mic.busy { opacity: .55; pointer-events: none; }
+@keyframes micpulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(255,107,107,.5); } 50% { box-shadow: 0 0 0 6px rgba(255,107,107,0); } }
+.cs-voice .cs-voice-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 12px; color: var(--mut); margin: 6px 0; }
+.cs-voice .cs-voice-row .cs-select { width: auto; flex: none; }
+.cs-on-device { font-size: 9px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--accent); border: 1px solid var(--accent); border-radius: 5px; padding: 0 5px; margin-left: 6px; }
+@media (prefers-reduced-motion: reduce) { #btn-mic.rec { animation: none; } }
 @media (prefers-reduced-motion: reduce) { .is-spin { animation: none; } }
 #toasts { position: fixed; bottom: 40px; right: 16px; display: flex; flex-direction: column; gap: 8px; z-index: 60; }
 .toast { background: var(--bg2); border: 1px solid var(--line); border-left: 3px solid var(--accent); border-radius: 8px; padding: 10px 14px; font-size: 13px; box-shadow: var(--shadow); animation: rise .25s ease; max-width: 320px; }
